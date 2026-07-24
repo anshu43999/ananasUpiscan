@@ -31,13 +31,106 @@ def currency_for_country(country: str) -> str:
 
 # ── proxy URL normalisation ────────────────────────────────────────────────
 
+def _normal_proxy_scheme(default_scheme: str) -> str:
+    scheme = str(default_scheme or "http").strip().lower()
+    scheme = scheme[:-3] if scheme.endswith("://") else scheme
+    return "socks5h" if scheme in ("socks5", "socks5h") else scheme or "http"
+
+
+def _valid_port(value: str) -> bool:
+    if not str(value or "").isdigit():
+        return False
+    port = int(value)
+    return 1 <= port <= 65535
+
+
+def _split_host_port(value: str) -> tuple[str, str] | None:
+    host, sep, port = str(value or "").rpartition(":")
+    if not sep or not host or not _valid_port(port):
+        return None
+    return host, port
+
+
+def _looks_like_host(value: str) -> bool:
+    text = str(value or "").strip().lower()
+    return (
+        text == "localhost"
+        or "." in text
+        or "[" in text
+        or "]" in text
+        or any(ch.isdigit() for ch in text)
+    )
+
+
+def _format_proxy_url(
+    scheme: str,
+    host: str,
+    port: str,
+    username: str = "",
+    password: str = "",
+) -> str:
+    host = str(host or "").strip()
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    netloc = f"{host}:{port}"
+    if username or password:
+        auth = quote(unquote(username), safe="-._~")
+        if password:
+            auth = f"{auth}:{quote(unquote(password), safe='-._~')}"
+        netloc = f"{auth}@{netloc}"
+    return urlunsplit((scheme, netloc, "", "", ""))
+
+
+def _normalize_shorthand_proxy(proxy: str, scheme: str) -> str:
+    """Normalize common proxy shorthands to scheme://user:pass@host:port."""
+    raw = str(proxy or "").strip()
+    if not raw:
+        return ""
+
+    if "@" in raw:
+        left, right = raw.split("@", 1)
+        right_host_port = _split_host_port(right)
+        if right_host_port:
+            user, sep, password = left.partition(":")
+            if sep and user:
+                host, port = right_host_port
+                return _format_proxy_url(scheme, host, port, user, password)
+
+        left_host_port = _split_host_port(left)
+        if left_host_port:
+            user, sep, password = right.partition(":")
+            if sep and user:
+                host, port = left_host_port
+                return _format_proxy_url(scheme, host, port, user, password)
+        return ""
+
+    parts = raw.split(":")
+    if len(parts) == 4 and all(parts):
+        first, second, third, fourth = parts
+        if _valid_port(second) and (
+            not _valid_port(fourth) or _looks_like_host(first) or not _looks_like_host(third)
+        ):
+            return _format_proxy_url(scheme, first, second, third, fourth)
+        if _valid_port(fourth):
+            return _format_proxy_url(scheme, third, fourth, first, second)
+
+    host_port = _split_host_port(raw)
+    if host_port:
+        host, port = host_port
+        return _format_proxy_url(scheme, host, port)
+
+    return ""
+
+
 def normalize_proxy_url(proxy: str, default_scheme: str = "http") -> str:
-    """Normalise a proxy URL: add scheme if missing, percent-encode auth."""
+    """Normalise a proxy URL: add scheme, parse shorthands, percent-encode auth."""
     proxy = str(proxy or "").strip()
     if not proxy:
         return ""
+    scheme = _normal_proxy_scheme(default_scheme)
     if "://" not in proxy:
-        proxy = f"{default_scheme}://{proxy}"
+        shorthand = _normalize_shorthand_proxy(proxy, scheme)
+        return shorthand or f"{scheme}://{proxy}"
 
     parsed = urlsplit(proxy)
     if parsed.username is None and parsed.password is None:
@@ -45,8 +138,12 @@ def normalize_proxy_url(proxy: str, default_scheme: str = "http") -> str:
 
     hostname = parsed.hostname or ""
     host = f"[{hostname}]" if ":" in hostname and not hostname.startswith("[") else hostname
-    if parsed.port:
-        host = f"{host}:{parsed.port}"
+    try:
+        port = parsed.port
+    except ValueError:
+        return proxy
+    if port:
+        host = f"{host}:{port}"
     username = quote(unquote(parsed.username or ""), safe="-._~")
     auth = username
     if parsed.password is not None:
@@ -59,9 +156,7 @@ def normalize_pre_proxy_url(proxy: str) -> str:
     proxy = str(proxy or "").strip()
     if not proxy:
         return ""
-    if "://" not in proxy:
-        proxy = f"socks5h://{proxy}"
-    return normalize_proxy_url(proxy)
+    return normalize_proxy_url(proxy, "socks5h")
 
 
 # ── proxy identity hashes ──────────────────────────────────────────────────

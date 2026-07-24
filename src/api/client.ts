@@ -5,7 +5,7 @@ const API_BASE_STORAGE_KEY = 'upiscan_api_base';
 const EXTRACT_API_BASE_STORAGE_KEY = 'upiscan_extract_api_base';
 const REQUEST_TIMEOUT_MS = 15000;
 
-function getApiKey(): string | null {
+export function getApiKey(): string | null {
   return sessionStorage.getItem(API_KEY_STORAGE_KEY);
 }
 

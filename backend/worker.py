@@ -32,6 +32,9 @@ def run_extract_worker(job_id: str, payload: dict[str, Any], log_queue: Queue) -
     if payload.get("billing_country"):
         config["billing_country"] = payload["billing_country"]
         config["provider_country"] = payload["billing_country"]
+    if payload.get("proxy_seeds"):
+        config["proxy_seeds"] = payload["proxy_seeds"]
+        config["proxy_remove_failed"] = False
     if payload.get("capture_diagnostics"):
         config["dump"] = True
 

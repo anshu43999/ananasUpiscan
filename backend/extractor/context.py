@@ -55,6 +55,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     "dump_dir": "",            # defaults to {script_dir}/dumps
     "proxy_seed_file": "",     # defaults to {script_dir}/proxy_seeds.txt
     "proxy_state_file": "",    # defaults to {script_dir}/proxy_state.json
+    "proxy_seeds": [],
 
     # proxy defaults
     "default_proxy_scheme": "http",
@@ -775,17 +776,48 @@ class ExtractionContext:
 
     # ── proxy seed loading ────────────────────────────────────────────────
 
-    def load_proxy_file(self, path: Path) -> list[str]:
-        """Read proxy seeds from a file, normalise URLs, and shuffle."""
+    def parse_proxy_seed_lines(self, lines: list[str]) -> list[str]:
+        """Normalise proxy seeds from text lines.
+
+        Supported formats:
+        - one proxy per line
+        - comma-separated proxies
+        - blank lines and lines beginning with "#" are ignored
+        """
         proxies: list[str] = []
-        if not path.exists():
-            return proxies
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                self.register_proxy_for_redaction(line)
-                proxy = normalize_proxy_url(line)
+        for line in lines:
+            line = str(line or "").strip().lstrip("\ufeff")
+            if not line or line.startswith("#"):
+                continue
+            for raw_proxy in line.split(","):
+                raw_proxy = raw_proxy.strip()
+                if not raw_proxy or raw_proxy.startswith("#"):
+                    continue
+                self.register_proxy_for_redaction(raw_proxy)
+                proxy = normalize_proxy_url(raw_proxy, self.default_proxy_scheme())
                 if proxy:
                     proxies.append(proxy)
+        return proxies
+
+    def load_inline_proxy_seeds(self) -> list[str]:
+        """Load per-job proxy seeds from config without touching the seed file."""
+        raw = self._cfg.get("proxy_seeds") or []
+        if isinstance(raw, str):
+            lines = raw.splitlines()
+        elif isinstance(raw, list):
+            lines = [str(item) for item in raw]
+        else:
+            lines = []
+        proxies = self.parse_proxy_seed_lines(lines)
+        random.shuffle(proxies)
+        return proxies
+
+    def load_proxy_file(self, path: Path) -> list[str]:
+        """Read proxy seeds from a file, normalise URLs, and shuffle."""
+        if not path.exists():
+            return []
+        with open(path, "r", encoding="utf-8") as f:
+            proxies = self.parse_proxy_seed_lines(list(f))
         random.shuffle(proxies)
         return proxies
 
@@ -813,10 +845,15 @@ class ExtractionContext:
         Raises RuntimeError if the seed file is missing, empty, or all seeds
         are in failure cooldown.
         """
-        path = self.proxy_seed_file_path
-        if not path.is_file():
-            raise RuntimeError("代理 Seed 文件不存在")
-        proxy_seeds = self.unique_proxy_seeds(self.load_proxy_file(path))
+        inline_proxy_seeds = self.load_inline_proxy_seeds()
+        if inline_proxy_seeds:
+            proxy_seeds = self.unique_proxy_seeds(inline_proxy_seeds)
+            self.log(f"加载本次任务自定义代理 Seed {len(proxy_seeds)} 条")
+        else:
+            path = self.proxy_seed_file_path
+            if not path.is_file():
+                raise RuntimeError("代理 Seed 文件不存在")
+            proxy_seeds = self.unique_proxy_seeds(self.load_proxy_file(path))
         if not proxy_seeds:
             raise RuntimeError("代理 Seed 为空")
         self.prune_proxy_seed_state(proxy_seeds)

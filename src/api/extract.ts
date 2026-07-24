@@ -90,6 +90,7 @@ export interface StartExtractOptions {
   language: string;
   billing_country: string;
   proxy_chain?: Record<string, string>;
+  proxy_seeds?: string[];
   custom_export_proxy?: string;
   client_fingerprint?: string;
   capture_diagnostics?: boolean;
