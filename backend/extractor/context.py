@@ -107,6 +107,27 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     "promo_mode": "campaign",
     "trial_days": 30,
 
+    # runtime/env aliases
+    "PP_TOKEN": "",
+    "UPI_TOKEN": "",
+    "PP_SESSION_TOKEN": "",
+    "PP_PROMO_MODE": "",
+    "PP_PROMO_ID": "",
+    "PP_ENTRY_POINT": "",
+    "PP_TRIAL_DAYS": "",
+    "PP_EXPECTED_AMOUNT": "",
+    "UPI_COUPON_FALLBACK_PROMO_CAMPAIGN": "",
+    "UPI_DUMP_WARMUP": "",
+    "UPI_APPROVE_WARMUP": "",
+    "UPI_APPROVE_PARALLEL": "",
+    "UPI_APPROVE_RETRY_MAX": "",
+    "UPI_APPROVE_STICKY": "",
+    "UPI_UPDATE_CUSTOMER_DATA": "",
+    "UPI_CHECKOUT_SNAPSHOT": "",
+    "UPI_USE_FIXED_BILLING": "",
+    "UPI_FLOW_MODE": "",
+    "UPI_CHECKOUT_COUNTRY": "",
+
     # Stripe / ChatGPT constants
     "stripe_pk": "",
     "stripe_runtime_version": "",

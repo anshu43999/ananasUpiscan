@@ -186,6 +186,9 @@ def load_token(ctx: ExtractionContext) -> tuple[str, str]:
                 ctx.log("loaded sessionToken cookie")
             return token, env_session or session_token
 
+    if not sys.stdin.isatty():
+        raise RuntimeError("access_token is required")
+
     token = input("请输入 access_token: ").strip()
     session_token = ctx.cfg_str("PP_SESSION_TOKEN", "").strip()
     token, parsed_session = normalize_token(token)
