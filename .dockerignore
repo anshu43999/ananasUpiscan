@@ -1,0 +1,13 @@
+node_modules
+dist
+backend/**/__pycache__
+backend/**/*.pyc
+logs
+dumps
+data
+.git
+.agents
+.codex
+.qoder
+*.log
+npm-debug.log*

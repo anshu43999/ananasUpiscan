@@ -1,0 +1,33 @@
+services:
+  upiscan:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: upiscan:latest
+    container_name: upiscan
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      UPISCAN_WORKERS: "2"
+      UPI_PROXY_SEED_FILE: /app/data/proxy_seeds.txt
+      UPI_PROXY_STATE_FILE: /app/data/proxy_state.json
+      UPI_LOG_DIR: /app/logs
+      UPI_DUMP_DIR: /app/dumps
+      UPI_DUMP: "0"
+      UPI_MAX_RETRY: "5"
+      UPI_CHECKOUT_RETRY_MAX: "5"
+      UPI_PROVIDER_RETRY_MAX: "3"
+      UPI_BOOTSTRAP_COUNTRY: IN
+      UPI_PROMOTION_COUNTRY: VN
+      UPI_PROVIDER_COUNTRY: IN
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./dumps:/app/dumps
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
