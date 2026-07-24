@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { useExtractJob } from '../hooks/useExtractJob';
-import { testProxyChain, type ProxyChainTestResult, type StartExtractOptions } from '../api/extract';
-import { submitCheckout } from '../api/tasks';
-import { getApiBase, getApiKey, setApiBase, setApiKey } from '../api/client';
+import {
+  submitPublisherCheckout,
+  testProxyChain,
+  type ProxyChainTestResult,
+  type StartExtractOptions,
+} from '../api/extract';
+import { getApiBase, getApiKey, setApiKey } from '../api/client';
 
 const STATUS_LABELS: Record<string, string> = {
   pending: 'Pending',
@@ -243,7 +247,6 @@ export function LinkExtract() {
 
   const handleSavePublisher = useCallback(() => {
     if (publisherApiKey.trim()) setApiKey(publisherApiKey.trim());
-    if (publisherApiBase.trim()) setApiBase(publisherApiBase.trim());
     const state: SavedPublisherState = {
       enabled: publisherEnabled,
       apiBase: publisherApiBase.trim() || getApiBase(),
@@ -265,12 +268,12 @@ export function LinkExtract() {
     setPublisherMessage('');
     try {
       setApiKey(apiKey);
-      if (publisherApiBase.trim()) setApiBase(publisherApiBase.trim());
-      await submitCheckout(taskId, {
-        checkout_data: {
-          access_token: accessToken.trim(),
-          pay_link: payLink,
-        },
+      await submitPublisherCheckout({
+        api_key: apiKey,
+        api_base: publisherApiBase.trim() || getApiBase(),
+        task_id: taskId,
+        access_token: accessToken.trim(),
+        pay_link: payLink,
       });
       setPublisherStatus('success');
       setPublisherMessage('Pay link submitted to publisher task');

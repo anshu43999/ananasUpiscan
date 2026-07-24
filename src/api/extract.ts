@@ -131,6 +131,30 @@ export function testProxyChain(
   });
 }
 
+export interface PublisherSubmitCheckoutOptions {
+  api_key: string;
+  api_base: string;
+  task_id: string;
+  access_token: string;
+  pay_link: string;
+}
+
+export interface PublisherSubmitCheckoutResult {
+  success: boolean;
+  status_code: number;
+  message?: string;
+  data?: Record<string, unknown>;
+}
+
+export function submitPublisherCheckout(
+  options: PublisherSubmitCheckoutOptions,
+): Promise<PublisherSubmitCheckoutResult> {
+  return extractFetch('/api/publisher/submit-checkout', {
+    method: 'POST',
+    body: JSON.stringify(options),
+  });
+}
+
 export function extractJobWsUrl(jobId: string): string {
   const base = getExtractApiBase();
   const path = `/api/extract/jobs/${jobId}/ws`;

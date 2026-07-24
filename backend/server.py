@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
+import requests
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +16,8 @@ from .models import (
     ExtractJobCreated,
     ExtractJobSnapshot,
     ExtractSettings,
+    PublisherSubmitCheckoutRequest,
+    PublisherSubmitCheckoutResult,
     ProxyChainTestResult,
 )
 from .ws_manager import WebSocketManager
@@ -82,6 +86,56 @@ async def cancel_extract_job(job_id: str) -> ExtractJobSnapshot:
 @app.post("/api/proxy-chain-test", response_model=ProxyChainTestResult)
 async def proxy_chain_test() -> ProxyChainTestResult:
     return ProxyChainTestResult(success=True, latency_ms=0)
+
+
+@app.post("/api/publisher/submit-checkout", response_model=PublisherSubmitCheckoutResult)
+async def submit_publisher_checkout(
+    request: PublisherSubmitCheckoutRequest,
+) -> PublisherSubmitCheckoutResult:
+    api_base = request.api_base.strip().rstrip("/") or "https://foarge.com/api/publisher/v1"
+    parsed = urlsplit(api_base)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="invalid publisher api base")
+
+    url = f"{api_base}/tasks/{request.task_id.strip()}/submit-checkout"
+    payload = {
+        "checkout_data": {
+            "access_token": request.access_token,
+            "pay_link": request.pay_link,
+        }
+    }
+    try:
+        response = requests.post(
+            url,
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {request.api_key.strip()}",
+                "Content-Type": "application/json",
+            },
+            timeout=20,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"publisher request failed: {exc}") from exc
+
+    data = None
+    if response.headers.get("content-type", "").startswith("application/json"):
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+    message = None
+    if isinstance(data, dict):
+        message = str(data.get("message") or data.get("error") or "") or None
+    if response.status_code >= 400:
+        detail = message or response.text[:500] or f"publisher returned HTTP {response.status_code}"
+        raise HTTPException(status_code=response.status_code, detail=detail)
+
+    return PublisherSubmitCheckoutResult(
+        success=True,
+        status_code=response.status_code,
+        message=message,
+        data=data if isinstance(data, dict) else None,
+    )
 
 
 @app.websocket("/api/extract/jobs/{job_id}/ws")

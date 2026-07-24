@@ -79,9 +79,21 @@ Use the Foarge Publisher API base:
 https://foarge.com/api/publisher/v1
 ```
 
-The API key is stored only in the browser session and is used by the frontend
-when calling `POST /tasks/{task_id}/submit-checkout`. It is not sent to the
-FastAPI extraction backend.
+The API key is stored only in the browser session. During handoff it is sent to
+your local FastAPI backend for this one request; the backend forwards it to
+Foarge and does not persist it. The frontend calls:
+
+```text
+POST /api/publisher/submit-checkout
+```
+
+The FastAPI backend then performs the server-to-server request to Foarge:
+
+```text
+POST https://foarge.com/api/publisher/v1/tasks/{task_id}/submit-checkout
+```
+
+This avoids browser CORS restrictions on `Authorization` requests to Foarge.
 
 Useful environment variables are in `docker-compose.yml`, including `UPI_MAX_RETRY`,
 `UPI_BOOTSTRAP_COUNTRY`, `UPI_PROMOTION_COUNTRY`, and `UPI_PROVIDER_COUNTRY`.

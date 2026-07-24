@@ -80,3 +80,18 @@ class ProxyChainTestResult(BaseModel):
     success: bool
     latency_ms: int | None = None
     error: str | None = None
+
+
+class PublisherSubmitCheckoutRequest(BaseModel):
+    api_key: str = Field(min_length=1)
+    api_base: str = "https://foarge.com/api/publisher/v1"
+    task_id: str = Field(min_length=1)
+    access_token: str = Field(min_length=1)
+    pay_link: str = Field(min_length=1)
+
+
+class PublisherSubmitCheckoutResult(BaseModel):
+    success: bool
+    status_code: int
+    message: str | None = None
+    data: dict[str, Any] | None = None
