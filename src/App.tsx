@@ -98,7 +98,7 @@ export default function App() {
                     type="text"
                     value={apiBaseInput}
                     onChange={(e) => setApiBaseInput(e.target.value)}
-                    placeholder="/api/publisher/v1"
+                    placeholder="https://foarge.com/api/publisher/v1"
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none font-mono"
                   />
                 </div>
@@ -114,7 +114,7 @@ export default function App() {
                 </div>
               </div>
               <p className="text-xs text-gray-400">
-                请输入你的 Wallet API Key（以 pk_live_ 开头）。Key 仅在当前浏览器会话中保存。
+                Publisher API Key can be pk_live_... or PBK-.... It is stored only in this browser session.
               </p>
               <button
                 onClick={handleSaveKey}

@@ -73,6 +73,12 @@ Publisher task ID
 Auto submit after extraction
 ```
 
+Use the Foarge Publisher API base:
+
+```text
+https://foarge.com/api/publisher/v1
+```
+
 The API key is stored only in the browser session and is used by the frontend
 when calling `POST /tasks/{task_id}/submit-checkout`. It is not sent to the
 FastAPI extraction backend.

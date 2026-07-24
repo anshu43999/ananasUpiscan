@@ -24,7 +24,8 @@ export function hasApiKey(): boolean {
 // ── Task management API base ──
 
 export function getApiBase(): string {
-  return sessionStorage.getItem(API_BASE_STORAGE_KEY) || API_BASE;
+  const stored = sessionStorage.getItem(API_BASE_STORAGE_KEY);
+  return stored && stored !== '/api/publisher/v1' ? stored : API_BASE;
 }
 
 export function setApiBase(url: string): void {

@@ -1,4 +1,4 @@
-export const API_BASE = '/api/publisher/v1';
+export const API_BASE = 'https://foarge.com/api/publisher/v1';
 
 export const STATUS_LABELS: Record<string, string> = {
   queued: '排队中',

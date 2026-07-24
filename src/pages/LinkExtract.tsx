@@ -514,7 +514,7 @@ export function LinkExtract() {
                   type="password"
                   value={publisherApiKey}
                   onChange={(event) => setPublisherApiKey(event.target.value)}
-                  placeholder="pk_live_..."
+                  placeholder="pk_live_... or PBK-..."
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500"
                 />
               </div>
@@ -534,7 +534,7 @@ export function LinkExtract() {
                 <input
                   value={publisherApiBase}
                   onChange={(event) => setPublisherApiBase(event.target.value)}
-                  placeholder="/api/publisher/v1"
+                  placeholder="https://foarge.com/api/publisher/v1"
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500"
                 />
               </div>
