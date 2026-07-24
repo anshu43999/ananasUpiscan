@@ -10,11 +10,11 @@ import {
 import { getApiKey, setApiKey } from '../api/client';
 
 const STATUS_LABELS: Record<string, string> = {
-  pending: 'Pending',
-  running: 'Running',
-  completed: 'Completed',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
+  pending: '等待中',
+  running: '提取中',
+  completed: '已完成',
+  failed: '失败',
+  cancelled: '已取消',
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -27,6 +27,12 @@ const STATUS_COLORS: Record<string, string> = {
 
 const COUNTRY_OPTIONS = ['IN', 'VN', 'US', 'NL', 'JP', 'BR', 'DE', 'FR', 'GB'];
 const PROXY_STAGES = ['checkout', 'promotion', 'provider', 'approve'] as const;
+const PROXY_STAGE_LABELS: Record<(typeof PROXY_STAGES)[number], string> = {
+  checkout: '下单',
+  promotion: '优惠',
+  provider: '支付',
+  approve: '确认',
+};
 const STORAGE_KEY_PROXY = 'upiscan_extract_proxy';
 const STORAGE_KEY_PUBLISHER = 'upiscan_publisher_handoff';
 const PUBLISHER_UPSTREAM_DEFAULT = 'https://foarge.com/api/publisher/v1';
@@ -225,7 +231,7 @@ export function LinkExtract() {
 
   const handleTestProxy = useCallback(async () => {
     if (!proxyChain) {
-      setTestResult({ success: false, error: 'Select a proxy chain first.' });
+      setTestResult({ success: false, error: '请先选择代理链路。' });
       return;
     }
     setTestLoading(true);
@@ -236,7 +242,7 @@ export function LinkExtract() {
     } catch (e: unknown) {
       setTestResult({
         success: false,
-        error: e instanceof Error ? e.message : 'Proxy test failed',
+        error: e instanceof Error ? e.message : '代理测试失败',
       });
     } finally {
       setTestLoading(false);
@@ -260,7 +266,7 @@ export function LinkExtract() {
     };
     localStorage.setItem(STORAGE_KEY_PUBLISHER, JSON.stringify(state));
     setPublisherStatus('idle');
-    setPublisherMessage('Publisher settings saved');
+    setPublisherMessage('发布接口配置已保存');
   }, [publisherApiBase, publisherApiKey, publisherAutoSubmit, publisherEnabled, publisherTaskId]);
 
   const handleSubmitPublisher = useCallback(async () => {
@@ -281,10 +287,10 @@ export function LinkExtract() {
         pay_link: payLink,
       });
       setPublisherStatus('success');
-      setPublisherMessage('Pay link submitted to publisher task');
+      setPublisherMessage('支付长链已提交到发布任务');
     } catch (e: unknown) {
       setPublisherStatus('error');
-      setPublisherMessage(e instanceof Error ? e.message : 'Publisher submit failed');
+      setPublisherMessage(e instanceof Error ? e.message : '发布接口提交失败');
     }
   }, [accessToken, job?.result?.url, publisherApiBase, publisherApiKey, publisherTaskId]);
 
@@ -329,8 +335,8 @@ export function LinkExtract() {
     <div className="mx-auto max-w-5xl space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">UPI link extraction</h2>
-          <p className="text-sm text-gray-500">FastAPI backend with live WebSocket logs.</p>
+          <h2 className="text-lg font-semibold text-gray-900">UPI 链接提取</h2>
+          <p className="text-sm text-gray-500">后端执行提取任务，前端实时显示 WebSocket 日志。</p>
         </div>
         {job && (
           <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_COLORS[job.status] || STATUS_COLORS.pending}`}>
@@ -342,20 +348,20 @@ export function LinkExtract() {
       <form onSubmit={handleSubmit} className="space-y-5 rounded-lg border border-gray-200 bg-white p-5">
         <div className="grid gap-4 lg:grid-cols-[1fr_260px]">
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-700">Access token</label>
+            <label className="mb-1.5 block text-sm font-medium text-gray-700">Access Token</label>
             <textarea
               value={accessToken}
               onChange={(event) => setAccessToken(event.target.value)}
               rows={3}
               required
-              placeholder="Paste access_token or exported JSON containing accessToken"
+              placeholder="粘贴 access_token，或包含 accessToken 的导出 JSON"
               className="w-full resize-y rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500"
             />
           </div>
 
           <div className="space-y-4">
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">Billing country</label>
+              <label className="mb-1.5 block text-sm font-medium text-gray-700">账单国家</label>
               <select
                 value={billingCountry}
                 onChange={(event) => setBillingCountry(event.target.value)}
@@ -374,25 +380,25 @@ export function LinkExtract() {
                 onChange={(event) => setCaptureDiagnostics(event.target.checked)}
                 className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
               />
-              Save HTTP diagnostics
+              保存 HTTP 诊断日志
             </label>
           </div>
         </div>
 
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-gray-700">Session token cookie</label>
+          <label className="mb-1.5 block text-sm font-medium text-gray-700">Session Token Cookie（可选）</label>
           <input
             type="password"
             value={sessionToken}
             onChange={(event) => setSessionToken(event.target.value)}
-            placeholder="Optional __Secure-next-auth.session-token"
+            placeholder="可选：__Secure-next-auth.session-token"
             className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500"
           />
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="space-y-3">
-            <label className="block text-sm font-medium text-gray-700">Proxy source</label>
+            <label className="block text-sm font-medium text-gray-700">代理来源</label>
             <select
               value={proxySourceMode}
               onChange={(event) => {
@@ -401,8 +407,8 @@ export function LinkExtract() {
               }}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500"
             >
-              <option value="builtin">Use server proxy_seeds.txt</option>
-              <option value="custom">Use custom proxies for this job</option>
+              <option value="builtin">使用服务器 proxy_seeds.txt</option>
+              <option value="custom">使用本次任务自定义代理</option>
             </select>
 
             {proxySourceMode === 'custom' && (
@@ -415,12 +421,12 @@ export function LinkExtract() {
                   className="w-full resize-y rounded-lg border border-gray-300 px-3 py-2 font-mono text-xs outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500"
                 />
                 <div className="mt-1 text-xs text-gray-500">
-                  {customProxyCount > 0 ? `${customProxyCount} proxies ready` : 'Enter at least one proxy'}
+                  {customProxyCount > 0 ? `已识别 ${customProxyCount} 条代理` : '请至少输入一条代理'}
                 </div>
               </div>
             )}
 
-            <label className="block text-sm font-medium text-gray-700">Proxy chain</label>
+            <label className="block text-sm font-medium text-gray-700">代理链路</label>
             <select
               value={proxyChainMode}
               onChange={(event) => {
@@ -429,16 +435,16 @@ export function LinkExtract() {
               }}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500"
             >
-              <option value="default">Use backend proxy_seeds.txt</option>
-              <option value="india">IN checkout / VN promo / IN provider</option>
-              <option value="manual">Manual countries</option>
+              <option value="default">使用后端默认国家配置</option>
+              <option value="india">IN checkout / VN 优惠 / IN provider</option>
+              <option value="manual">手动选择国家</option>
             </select>
 
             {proxyChainMode === 'manual' && (
               <div className="grid grid-cols-2 gap-2">
                 {PROXY_STAGES.map((stage) => (
                   <label key={stage} className="text-xs text-gray-500">
-                    <span className="mb-1 block capitalize">{stage}</span>
+                    <span className="mb-1 block">{PROXY_STAGE_LABELS[stage]}</span>
                     <select
                       value={manualRegions[stage]}
                       onChange={(event) =>
@@ -460,11 +466,11 @@ export function LinkExtract() {
           </div>
 
           <div className="space-y-3">
-            <label className="block text-sm font-medium text-gray-700">Pre-proxy</label>
+            <label className="block text-sm font-medium text-gray-700">前置代理</label>
             <input
               value={customExportProxy}
               onChange={(event) => setCustomExportProxy(event.target.value)}
-              placeholder="Optional local proxy, e.g. socks5://127.0.0.1:7890"
+              placeholder="可选本地前置代理，例如 socks5://127.0.0.1:7890"
               className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500"
             />
 
@@ -475,29 +481,29 @@ export function LinkExtract() {
                 disabled={testLoading || !proxyChain}
                 className="rounded border border-purple-200 px-3 py-1.5 text-xs font-medium text-purple-700 hover:bg-purple-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-300"
               >
-                {testLoading ? 'Testing...' : 'Test chain'}
+                {testLoading ? '测试中...' : '测试链路'}
               </button>
               <button
                 type="button"
                 onClick={handleSaveProxy}
                 className="rounded border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
               >
-                Save proxy
+                保存代理
               </button>
               <button
                 type="button"
                 onClick={handleClearProxy}
                 className="rounded border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-400 hover:bg-gray-50"
               >
-                Clear saved
+                清除保存
               </button>
             </div>
 
             {testResult && (
               <div className={`rounded px-3 py-2 text-xs ${testResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
                 {testResult.success
-                  ? `Proxy chain accepted (${testResult.latency_ms ?? 0} ms)`
-                  : testResult.error || 'Proxy test failed'}
+                  ? `代理链路可用（${testResult.latency_ms ?? 0} ms）`
+                  : testResult.error || '代理测试失败'}
               </div>
             )}
           </div>
@@ -511,13 +517,13 @@ export function LinkExtract() {
               onChange={(event) => setPublisherEnabled(event.target.checked)}
               className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
             />
-            Publisher handoff
+            提交到发布接口
           </label>
 
           {publisherEnabled && (
             <div className="grid gap-3 lg:grid-cols-2">
               <div>
-                <label className="mb-1 block text-xs font-medium text-gray-500">Publisher API key</label>
+                <label className="mb-1 block text-xs font-medium text-gray-500">发布接口 API Key</label>
                 <input
                   type="password"
                   value={publisherApiKey}
@@ -528,17 +534,17 @@ export function LinkExtract() {
               </div>
 
               <div>
-                <label className="mb-1 block text-xs font-medium text-gray-500">Publisher task ID</label>
+                <label className="mb-1 block text-xs font-medium text-gray-500">发布任务 ID</label>
                 <input
                   value={publisherTaskId}
                   onChange={(event) => setPublisherTaskId(event.target.value)}
-                  placeholder="Task ID"
+                  placeholder="任务 ID"
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500"
                 />
               </div>
 
               <div className="lg:col-span-2">
-                <label className="mb-1 block text-xs font-medium text-gray-500">Publisher API base</label>
+                <label className="mb-1 block text-xs font-medium text-gray-500">发布接口上游地址</label>
                 <input
                   value={publisherApiBase}
                   onChange={(event) => setPublisherApiBase(event.target.value)}
@@ -554,7 +560,7 @@ export function LinkExtract() {
                   onChange={(event) => setPublisherAutoSubmit(event.target.checked)}
                   className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
                 />
-                Auto submit after extraction
+                提取成功后自动提交
               </label>
 
               <div className="flex flex-wrap justify-end gap-2">
@@ -563,7 +569,7 @@ export function LinkExtract() {
                   onClick={handleSavePublisher}
                   className="rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
                 >
-                  Save publisher
+                  保存发布配置
                 </button>
                 <button
                   type="button"
@@ -571,7 +577,7 @@ export function LinkExtract() {
                   disabled={!canSubmitPublisher}
                   className="rounded border border-purple-200 bg-white px-3 py-1.5 text-xs font-medium text-purple-700 hover:bg-purple-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-300"
                 >
-                  {publisherStatus === 'submitting' ? 'Submitting...' : 'Submit pay link'}
+                  {publisherStatus === 'submitting' ? '提交中...' : '提交支付长链'}
                 </button>
               </div>
 
@@ -598,7 +604,7 @@ export function LinkExtract() {
             disabled={loading || !canSubmit}
             className="flex-1 rounded-lg bg-purple-600 py-2.5 text-sm font-medium text-white transition-colors hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-gray-300"
           >
-            {loading ? 'Submitting...' : canCancel ? 'Job running' : 'Start extraction'}
+            {loading ? '提交中...' : canCancel ? '任务运行中' : '开始提取'}
           </button>
           {canCancel && (
             <button
@@ -606,7 +612,7 @@ export function LinkExtract() {
               onClick={cancel}
               className="rounded-lg border border-red-200 px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50"
             >
-              Cancel
+              取消
             </button>
           )}
         </div>
@@ -618,7 +624,7 @@ export function LinkExtract() {
         <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-5">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-semibold text-gray-800">Job result</h3>
+              <h3 className="text-sm font-semibold text-gray-800">任务结果</h3>
               <p className="font-mono text-xs text-gray-400">{job.job_id}</p>
             </div>
             {(job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') && (
@@ -627,7 +633,7 @@ export function LinkExtract() {
                 onClick={reset}
                 className="rounded border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-50"
               >
-                New job
+                新任务
               </button>
             )}
           </div>
@@ -635,14 +641,14 @@ export function LinkExtract() {
           {(job.status === 'pending' || job.status === 'running') && (
             <div className="flex items-center gap-3 text-sm text-gray-500">
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-purple-500 border-t-transparent" />
-              Extracting UPI payment URL...
+              正在提取 UPI 支付链接...
             </div>
           )}
 
           {job.status === 'completed' && job.result?.url && (
             <div className="grid gap-4 lg:grid-cols-[1fr_240px]">
               <div className="rounded-lg bg-gray-50 p-4">
-                <label className="mb-2 block text-xs font-medium text-gray-500">Payment URL</label>
+                <label className="mb-2 block text-xs font-medium text-gray-500">支付链接</label>
                 <div className="flex gap-2">
                   <code className="min-w-0 flex-1 break-all rounded border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700">
                     {job.result.url}
@@ -652,13 +658,13 @@ export function LinkExtract() {
                     onClick={handleCopyUrl}
                     className="shrink-0 rounded border border-purple-200 px-3 py-2 text-xs font-medium text-purple-700 hover:bg-purple-50"
                   >
-                    {copied ? 'Copied' : 'Copy'}
+                    {copied ? '已复制' : '复制'}
                   </button>
                 </div>
               </div>
               {qrDataUrl && (
                 <div className="flex justify-center rounded-lg border border-gray-200 bg-white p-3">
-                  <img src={qrDataUrl} alt="Payment QR code" className="h-52 w-52" />
+                  <img src={qrDataUrl} alt="支付二维码" className="h-52 w-52" />
                 </div>
               )}
             </div>
@@ -666,7 +672,7 @@ export function LinkExtract() {
 
           {job.status === 'failed' && (
             <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
-              {job.error || 'Extraction failed'}
+              {job.error || '提取失败'}
             </div>
           )}
 
@@ -677,7 +683,7 @@ export function LinkExtract() {
                 onClick={() => setLogsExpanded((value) => !value)}
                 className="text-xs text-gray-500 hover:text-gray-700"
               >
-                {logsExpanded ? 'Hide logs' : 'Show logs'} ({job.logs.length})
+                {logsExpanded ? '隐藏日志' : '显示日志'} ({job.logs.length})
               </button>
               {logsExpanded && (
                 <div className="mt-2 max-h-80 space-y-1 overflow-y-auto rounded-lg bg-gray-950 p-3">
