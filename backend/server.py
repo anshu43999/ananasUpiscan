@@ -5,7 +5,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import requests
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -26,6 +26,10 @@ from .ws_manager import WebSocketManager
 app = FastAPI(title="UPIScan Backend")
 ws_manager = WebSocketManager()
 job_manager = JobManager(ws_manager, max_workers=int(os.environ.get("UPISCAN_WORKERS", "2")))
+FOARGE_PUBLISHER_API_BASE = os.environ.get(
+    "FOARGE_PUBLISHER_API_BASE",
+    "https://foarge.com/api/publisher/v1",
+).rstrip("/")
 
 app.add_middleware(
     CORSMiddleware,
@@ -135,6 +139,48 @@ async def submit_publisher_checkout(
         status_code=response.status_code,
         message=message,
         data=data if isinstance(data, dict) else None,
+    )
+
+
+@app.api_route(
+    "/api/publisher-proxy/v1/{publisher_path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+)
+async def publisher_proxy(publisher_path: str, request: Request) -> Response:
+    authorization = request.headers.get("authorization", "").strip()
+    if not authorization:
+        raise HTTPException(status_code=401, detail="missing publisher authorization")
+
+    target_url = f"{FOARGE_PUBLISHER_API_BASE}/{publisher_path.lstrip('/')}"
+    body = await request.body()
+    headers = {
+        "Authorization": authorization,
+        "Accept": request.headers.get("accept", "application/json"),
+    }
+    content_type = request.headers.get("content-type")
+    if content_type:
+        headers["Content-Type"] = content_type
+
+    try:
+        upstream = requests.request(
+            request.method,
+            target_url,
+            params=dict(request.query_params),
+            data=body if body else None,
+            headers=headers,
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"publisher request failed: {exc}") from exc
+
+    response_headers = {}
+    upstream_content_type = upstream.headers.get("content-type")
+    if upstream_content_type:
+        response_headers["content-type"] = upstream_content_type
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers=response_headers,
     )
 
 

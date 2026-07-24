@@ -25,7 +25,12 @@ export function hasApiKey(): boolean {
 
 export function getApiBase(): string {
   const stored = sessionStorage.getItem(API_BASE_STORAGE_KEY);
-  return stored && stored !== '/api/publisher/v1' ? stored : API_BASE;
+  const normalized = (stored || '').replace(/\/+$/, '');
+  return normalized &&
+    normalized !== '/api/publisher/v1' &&
+    normalized !== 'https://foarge.com/api/publisher/v1'
+    ? stored || API_BASE
+    : API_BASE;
 }
 
 export function setApiBase(url: string): void {

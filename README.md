@@ -79,6 +79,17 @@ Use the Foarge Publisher API base:
 https://foarge.com/api/publisher/v1
 ```
 
+In Docker/browser deployments, the frontend should use the local proxy base for
+task management:
+
+```text
+/api/publisher-proxy/v1
+```
+
+FastAPI forwards those requests to Foarge server-to-server using
+`FOARGE_PUBLISHER_API_BASE`, which defaults to
+`https://foarge.com/api/publisher/v1`.
+
 The API key is stored only in the browser session. During handoff it is sent to
 your local FastAPI backend for this one request; the backend forwards it to
 Foarge and does not persist it. The frontend calls:

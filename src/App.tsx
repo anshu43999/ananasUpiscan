@@ -98,7 +98,7 @@ export default function App() {
                     type="text"
                     value={apiBaseInput}
                     onChange={(e) => setApiBaseInput(e.target.value)}
-                    placeholder="https://foarge.com/api/publisher/v1"
+                    placeholder="/api/publisher-proxy/v1"
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none font-mono"
                   />
                 </div>

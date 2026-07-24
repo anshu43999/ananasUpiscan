@@ -7,7 +7,7 @@ import {
   type ProxyChainTestResult,
   type StartExtractOptions,
 } from '../api/extract';
-import { getApiBase, getApiKey, setApiKey } from '../api/client';
+import { getApiKey, setApiKey } from '../api/client';
 
 const STATUS_LABELS: Record<string, string> = {
   pending: 'Pending',
@@ -29,6 +29,7 @@ const COUNTRY_OPTIONS = ['IN', 'VN', 'US', 'NL', 'JP', 'BR', 'DE', 'FR', 'GB'];
 const PROXY_STAGES = ['checkout', 'promotion', 'provider', 'approve'] as const;
 const STORAGE_KEY_PROXY = 'upiscan_extract_proxy';
 const STORAGE_KEY_PUBLISHER = 'upiscan_publisher_handoff';
+const PUBLISHER_UPSTREAM_DEFAULT = 'https://foarge.com/api/publisher/v1';
 
 type ProxyStage = (typeof PROXY_STAGES)[number];
 type ProxySourceMode = 'builtin' | 'custom';
@@ -125,7 +126,7 @@ export function LinkExtract() {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [publisherEnabled, setPublisherEnabled] = useState(false);
-  const [publisherApiBase, setPublisherApiBase] = useState(getApiBase());
+  const [publisherApiBase, setPublisherApiBase] = useState(PUBLISHER_UPSTREAM_DEFAULT);
   const [publisherApiKey, setPublisherApiKey] = useState(getApiKey() || '');
   const [publisherTaskId, setPublisherTaskId] = useState('');
   const [publisherAutoSubmit, setPublisherAutoSubmit] = useState(false);
@@ -151,7 +152,11 @@ export function LinkExtract() {
     const saved = loadPublisherState();
     if (!saved) return;
     setPublisherEnabled(saved.enabled);
-    setPublisherApiBase(saved.apiBase || getApiBase());
+    setPublisherApiBase(
+      saved.apiBase && !saved.apiBase.startsWith('/api/')
+        ? saved.apiBase
+        : PUBLISHER_UPSTREAM_DEFAULT,
+    );
     setPublisherTaskId(saved.taskId || '');
     setPublisherAutoSubmit(saved.autoSubmit);
   }, []);
@@ -249,7 +254,7 @@ export function LinkExtract() {
     if (publisherApiKey.trim()) setApiKey(publisherApiKey.trim());
     const state: SavedPublisherState = {
       enabled: publisherEnabled,
-      apiBase: publisherApiBase.trim() || getApiBase(),
+      apiBase: publisherApiBase.trim() || PUBLISHER_UPSTREAM_DEFAULT,
       taskId: publisherTaskId.trim(),
       autoSubmit: publisherAutoSubmit,
     };
@@ -270,7 +275,7 @@ export function LinkExtract() {
       setApiKey(apiKey);
       await submitPublisherCheckout({
         api_key: apiKey,
-        api_base: publisherApiBase.trim() || getApiBase(),
+        api_base: publisherApiBase.trim() || PUBLISHER_UPSTREAM_DEFAULT,
         task_id: taskId,
         access_token: accessToken.trim(),
         pay_link: payLink,
