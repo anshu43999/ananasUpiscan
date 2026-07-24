@@ -11,10 +11,14 @@ live in the ExtractionContext class itself and call these pure utilities.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 from .config import COUNTRY_CURRENCY, country_selector_re
+
+
+PROXY_CHAIN_PREFIX = "upiscan-chain:"
 
 
 # ── country utilities ──────────────────────────────────────────────────────
@@ -159,6 +163,35 @@ def normalize_pre_proxy_url(proxy: str) -> str:
     return normalize_proxy_url(proxy, "socks5h")
 
 
+def make_proxy_chain_seed(checkout: str, promotion: str, provider: str) -> str:
+    chain = {
+        "checkout": normalize_proxy_url(checkout),
+        "promotion": normalize_proxy_url(promotion),
+        "provider": normalize_proxy_url(provider),
+    }
+    if not all(chain.values()):
+        return ""
+    return PROXY_CHAIN_PREFIX + json.dumps(chain, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def parse_proxy_chain_seed(proxy_seed: str) -> dict[str, str] | None:
+    raw = str(proxy_seed or "").strip()
+    if not raw.startswith(PROXY_CHAIN_PREFIX):
+        return None
+    try:
+        data = json.loads(raw[len(PROXY_CHAIN_PREFIX):])
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    chain = {
+        "checkout": normalize_proxy_url(str(data.get("checkout") or "")),
+        "promotion": normalize_proxy_url(str(data.get("promotion") or "")),
+        "provider": normalize_proxy_url(str(data.get("provider") or "")),
+    }
+    return chain if all(chain.values()) else None
+
+
 # ── proxy identity hashes ──────────────────────────────────────────────────
 
 def proxy_key(proxy: str) -> str:
@@ -174,6 +207,11 @@ def proxy_chain_key(proxy: str) -> str:
     before hashing, so that derived proxies for different countries still share
     the same chain key.
     """
+    chain = parse_proxy_chain_seed(proxy)
+    if chain:
+        normalized = "|".join(unquote(chain[key]) for key in ("checkout", "promotion", "provider"))
+        return hashlib.sha256(normalized.encode()).hexdigest()[:10]
+
     proxy = unquote(normalize_proxy_url(proxy))
     normalized = country_selector_re().sub(
         lambda match: f"{match.group('name')}{match.group('separator')}*",
@@ -184,6 +222,12 @@ def proxy_chain_key(proxy: str) -> str:
 
 def proxy_short(proxy: str) -> str:
     """Human-readable short proxy label for log output."""
+    chain = parse_proxy_chain_seed(proxy)
+    if chain:
+        digest = hashlib.sha256(
+            "|".join(chain[key] for key in ("checkout", "promotion", "provider")).encode()
+        ).hexdigest()[:10]
+        return f"chain#{digest}"
     proxy = normalize_proxy_url(proxy)
     if not proxy:
         return "direct"

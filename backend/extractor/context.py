@@ -38,6 +38,7 @@ from .proxy import (
     normalize_country,
     normalize_pre_proxy_url,
     normalize_proxy_url,
+    make_proxy_chain_seed,
     proxy_chain_key,
     proxy_key,
     proxy_label,
@@ -56,6 +57,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     "proxy_seed_file": "",     # defaults to {script_dir}/proxy_seeds.txt
     "proxy_state_file": "",    # defaults to {script_dir}/proxy_state.json
     "proxy_seeds": [],
+    "proxy_seed_chains": [],
 
     # proxy defaults
     "default_proxy_scheme": "http",
@@ -801,6 +803,11 @@ class ExtractionContext:
 
     def load_inline_proxy_seeds(self) -> list[str]:
         """Load per-job proxy seeds from config without touching the seed file."""
+        chain_seeds = self.load_inline_proxy_chain_seeds()
+        if chain_seeds:
+            random.shuffle(chain_seeds)
+            return chain_seeds
+
         raw = self._cfg.get("proxy_seeds") or []
         if isinstance(raw, str):
             lines = raw.splitlines()
@@ -811,6 +818,27 @@ class ExtractionContext:
         proxies = self.parse_proxy_seed_lines(lines)
         random.shuffle(proxies)
         return proxies
+
+    def load_inline_proxy_chain_seeds(self) -> list[str]:
+        """Load per-job explicit checkout/promotion/provider proxy chains."""
+        raw = self._cfg.get("proxy_seed_chains") or []
+        if not isinstance(raw, list):
+            return []
+        seeds: list[str] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            checkout = normalize_proxy_url(str(item.get("checkout") or ""), self.default_proxy_scheme())
+            promotion = normalize_proxy_url(str(item.get("promotion") or ""), self.default_proxy_scheme())
+            provider = normalize_proxy_url(str(item.get("provider") or ""), self.default_proxy_scheme())
+            seed = make_proxy_chain_seed(checkout, promotion, provider)
+            if not seed:
+                continue
+            for proxy in (checkout, promotion, provider):
+                self.register_proxy_for_redaction(proxy)
+            self.register_proxy_for_redaction(seed)
+            seeds.append(seed)
+        return seeds
 
     def load_proxy_file(self, path: Path) -> list[str]:
         """Read proxy seeds from a file, normalise URLs, and shuffle."""

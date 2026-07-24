@@ -53,6 +53,7 @@ from .proxy import (
     currency_for_country,
     is_upi_unavailable_error,
     normalize_country,
+    parse_proxy_chain_seed,
     proxy_chain_key,
     proxy_for_country,
     proxy_key,
@@ -192,6 +193,13 @@ def load_token(ctx: ExtractionContext) -> tuple[str, str]:
 
 
 def upi_proxy_chain(ctx: ExtractionContext, proxy_seed: str) -> tuple[str, str, str]:
+    explicit_chain = parse_proxy_chain_seed(proxy_seed)
+    if explicit_chain:
+        return (
+            explicit_chain["checkout"],
+            explicit_chain["promotion"],
+            explicit_chain["provider"],
+        )
     checkout_proxy = proxy_for_country(proxy_seed, ctx.bootstrap_country)
     promotion_proxy = proxy_for_country(proxy_seed, ctx.promotion_country)
     provider_proxy = proxy_for_country(proxy_seed, ctx.provider_country)
@@ -205,10 +213,14 @@ def log_upi_proxy_chain(
     promotion_proxy: str,
     provider_proxy: str,
 ) -> None:
-    promotion_chain = " -> ".join(
-        f"{country}={proxy_label(proxy_for_country(proxy_seed, country))}"
-        for country in ctx.promotion_countries
-    )
+    explicit_chain = parse_proxy_chain_seed(proxy_seed)
+    if explicit_chain:
+        promotion_chain = f"{ctx.promotion_country}={proxy_label(promotion_proxy)}"
+    else:
+        promotion_chain = " -> ".join(
+            f"{country}={proxy_label(proxy_for_country(proxy_seed, country))}"
+            for country in ctx.promotion_countries
+        )
     ctx.log(
         "proxy chain: "
         f"{ctx.bootstrap_country} checkout={proxy_label(checkout_proxy)}; "

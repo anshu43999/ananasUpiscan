@@ -41,6 +41,7 @@ class ExtractJobCreate(BaseModel):
     billing_country: str = "IN"
     proxy_chain: dict[str, str] | None = None
     proxy_seeds: list[str] = Field(default_factory=list)
+    proxy_seed_chains: list[dict[str, str]] = Field(default_factory=list)
     custom_export_proxy: str | None = None
     client_fingerprint: str | None = None
     capture_diagnostics: bool = False

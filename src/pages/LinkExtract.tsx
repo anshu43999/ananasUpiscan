@@ -27,11 +27,16 @@ const STATUS_COLORS: Record<string, string> = {
 
 const COUNTRY_OPTIONS = ['IN', 'VN', 'US', 'NL', 'JP', 'BR', 'DE', 'FR', 'GB'];
 const PROXY_STAGES = ['checkout', 'promotion', 'provider', 'approve'] as const;
+const CUSTOM_PROXY_STAGES = ['checkout', 'promotion'] as const;
 const PROXY_STAGE_LABELS: Record<(typeof PROXY_STAGES)[number], string> = {
   checkout: '下单',
   promotion: '优惠',
   provider: '支付',
   approve: '确认',
+};
+const CUSTOM_PROXY_STAGE_LABELS: Record<(typeof CUSTOM_PROXY_STAGES)[number], string> = {
+  checkout: 'IN 代理（下单 / 支付确认）',
+  promotion: 'VN 代理（优惠阶段）',
 };
 const STORAGE_KEY_PROXY = 'upiscan_extract_proxy';
 const STORAGE_KEY_PUBLISHER = 'upiscan_publisher_handoff';
@@ -47,6 +52,7 @@ interface SavedProxyState {
   manualRegions: Record<ProxyStage, string>;
   customExportProxy: string;
   customProxyText?: string;
+  customProxyTexts?: Partial<Record<ProxyStage, string>>;
 }
 
 interface SavedPublisherState {
@@ -108,6 +114,19 @@ function parseProxySeeds(value: string): string[] {
     .filter((line) => line && !line.startsWith('#'));
 }
 
+function buildProxySeedChains(proxyTexts: Record<ProxyStage, string>): Array<Record<string, string>> {
+  const checkout = parseProxySeeds(proxyTexts.checkout);
+  const promotion = parseProxySeeds(proxyTexts.promotion);
+  if (!checkout.length || !promotion.length) return [];
+
+  const total = Math.max(checkout.length, promotion.length);
+  return Array.from({ length: total }, (_, index) => ({
+    checkout: checkout[index % checkout.length],
+    promotion: promotion[index % promotion.length],
+    provider: checkout[index % checkout.length],
+  }));
+}
+
 export function LinkExtract() {
   const { job, loading, error, submit, cancel, reset } = useExtractJob();
   const autoPublisherJobRef = useRef<string | null>(null);
@@ -124,7 +143,12 @@ export function LinkExtract() {
     provider: 'IN',
     approve: 'IN',
   });
-  const [customProxyText, setCustomProxyText] = useState('');
+  const [customProxyTexts, setCustomProxyTexts] = useState<Record<ProxyStage, string>>({
+    checkout: '',
+    promotion: '',
+    provider: '',
+    approve: '',
+  });
   const [customExportProxy, setCustomExportProxy] = useState('');
   const [testResult, setTestResult] = useState<ProxyChainTestResult | null>(null);
   const [testLoading, setTestLoading] = useState(false);
@@ -150,7 +174,11 @@ export function LinkExtract() {
     setProxySourceMode(saved.proxySourceMode || 'builtin');
     setProxyChainMode(saved.proxyChainMode);
     setManualRegions((current) => ({ ...current, ...saved.manualRegions }));
-    setCustomProxyText(saved.customProxyText || '');
+    setCustomProxyTexts((current) => ({
+      ...current,
+      ...(saved.customProxyTexts || {}),
+      checkout: saved.customProxyTexts?.checkout || saved.customProxyText || current.checkout,
+    }));
     setCustomExportProxy(saved.customExportProxy || '');
   }, []);
 
@@ -182,8 +210,8 @@ export function LinkExtract() {
       event.preventDefault();
       const token = accessToken.trim();
       if (!token) return;
-      const proxySeeds = proxySourceMode === 'custom' ? parseProxySeeds(customProxyText) : [];
-      if (proxySourceMode === 'custom' && proxySeeds.length === 0) return;
+      const proxySeedChains = proxySourceMode === 'custom' ? buildProxySeedChains(customProxyTexts) : [];
+      if (proxySourceMode === 'custom' && proxySeedChains.length === 0) return;
 
       const options: StartExtractOptions = {
         access_token: token,
@@ -193,7 +221,7 @@ export function LinkExtract() {
         language: 'auto',
         billing_country: proxyChain?.provider || billingCountry,
         proxy_chain: proxyChain,
-        proxy_seeds: proxySeeds.length ? proxySeeds : undefined,
+        proxy_seed_chains: proxySeedChains.length ? proxySeedChains : undefined,
         custom_export_proxy: customExportProxy.trim() || undefined,
         capture_diagnostics: captureDiagnostics,
         config: configFromProxyChain(proxyChain, customExportProxy),
@@ -206,7 +234,7 @@ export function LinkExtract() {
       billingCountry,
       captureDiagnostics,
       customExportProxy,
-      customProxyText,
+      customProxyTexts,
       proxyChain,
       proxySourceMode,
       sessionToken,
@@ -219,11 +247,11 @@ export function LinkExtract() {
       proxySourceMode,
       proxyChainMode,
       manualRegions,
-      customProxyText,
+      customProxyTexts,
       customExportProxy,
     };
     localStorage.setItem(STORAGE_KEY_PROXY, JSON.stringify(state));
-  }, [customExportProxy, customProxyText, manualRegions, proxyChainMode, proxySourceMode]);
+  }, [customExportProxy, customProxyTexts, manualRegions, proxyChainMode, proxySourceMode]);
 
   const handleClearProxy = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY_PROXY);
@@ -320,7 +348,7 @@ export function LinkExtract() {
   ]);
 
   const canCancel = job?.status === 'pending' || job?.status === 'running';
-  const customProxyCount = parseProxySeeds(customProxyText).length;
+  const customProxyCount = buildProxySeedChains(customProxyTexts).length;
   const canSubmit =
     !!accessToken.trim() &&
     !canCancel &&
@@ -412,16 +440,28 @@ export function LinkExtract() {
             </select>
 
             {proxySourceMode === 'custom' && (
-              <div>
-                <textarea
-                  value={customProxyText}
-                  onChange={(event) => setCustomProxyText(event.target.value)}
-                  rows={5}
-                  placeholder={'HOST:PORT:USER:PASS\nHOST:PORT@USER:PASS\nUSER:PASS:HOST:PORT\nUSER:PASS@HOST:PORT'}
-                  className="w-full resize-y rounded-lg border border-gray-300 px-3 py-2 font-mono text-xs outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500"
-                />
-                <div className="mt-1 text-xs text-gray-500">
-                  {customProxyCount > 0 ? `已识别 ${customProxyCount} 条代理` : '请至少输入一条代理'}
+              <div className="space-y-3">
+                {CUSTOM_PROXY_STAGES.map((stage) => (
+                  <label key={stage} className="block">
+                    <span className="mb-1 block text-xs font-medium text-gray-500">
+                      {CUSTOM_PROXY_STAGE_LABELS[stage]}
+                    </span>
+                    <textarea
+                      value={customProxyTexts[stage]}
+                      onChange={(event) =>
+                        setCustomProxyTexts((current) => ({
+                          ...current,
+                          [stage]: event.target.value,
+                        }))
+                      }
+                      rows={3}
+                      placeholder={'HOST:PORT:USER:PASS\nHOST:PORT@USER:PASS\nUSER:PASS:HOST:PORT\nUSER:PASS@HOST:PORT'}
+                      className="w-full resize-y rounded-lg border border-gray-300 px-3 py-2 font-mono text-xs outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500"
+                    />
+                  </label>
+                ))}
+                <div className="text-xs text-gray-500">
+                  {customProxyCount > 0 ? `已组合 ${customProxyCount} 组两国代理链` : '请分别输入 IN 代理和 VN 代理；IN 会用于下单和支付确认'}
                 </div>
               </div>
             )}
