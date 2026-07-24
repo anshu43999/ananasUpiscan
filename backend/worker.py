@@ -25,13 +25,15 @@ class QueueExtractionContext(ExtractionContext):
 
 def run_extract_worker(job_id: str, payload: dict[str, Any], log_queue: Queue) -> dict[str, Any]:
     config = config_from_env(Path.cwd())
-    config.update(payload.get("config") or {})
+    request_config = payload.get("config") or {}
+    config.update(request_config)
     config["PP_TOKEN"] = payload["access_token"]
     if payload.get("session_token"):
         config["PP_SESSION_TOKEN"] = payload["session_token"]
     if payload.get("billing_country"):
         config["billing_country"] = payload["billing_country"]
-        config["provider_country"] = payload["billing_country"]
+        if "provider_country" not in request_config:
+            config["provider_country"] = payload["billing_country"]
     if payload.get("proxy_seeds"):
         config["proxy_seeds"] = payload["proxy_seeds"]
         config["proxy_remove_failed"] = False

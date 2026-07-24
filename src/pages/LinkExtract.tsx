@@ -191,7 +191,7 @@ export function LinkExtract() {
         payment_method: 'upi',
         payment_page_mode: 'custom',
         language: 'auto',
-        billing_country: billingCountry,
+        billing_country: proxyChain?.provider || billingCountry,
         proxy_chain: proxyChain,
         proxy_seeds: proxySeeds.length ? proxySeeds : undefined,
         custom_export_proxy: customExportProxy.trim() || undefined,
@@ -426,7 +426,7 @@ export function LinkExtract() {
               </div>
             )}
 
-            <label className="block text-sm font-medium text-gray-700">代理链路</label>
+            <label className="block text-sm font-medium text-gray-700">国家链路</label>
             <select
               value={proxyChainMode}
               onChange={(event) => {
@@ -435,10 +435,13 @@ export function LinkExtract() {
               }}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500"
             >
-              <option value="default">使用后端默认国家配置</option>
+              <option value="default">使用后端默认国家链路</option>
               <option value="india">IN checkout / VN 优惠 / IN provider</option>
               <option value="manual">手动选择国家</option>
             </select>
+            <p className="text-xs text-gray-500">
+              同一条代理 seed 会按国家链路派生为下单、优惠和支付代理。
+            </p>
 
             {proxyChainMode === 'manual' && (
               <div className="grid grid-cols-2 gap-2">
