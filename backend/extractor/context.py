@@ -64,8 +64,8 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     "pre_proxy": "",           # UPI_PRE_PROXY / PP_PRE_PROXY / PP_LOCAL_PROXY
 
     # country configuration
-    "bootstrap_country": "IN",
-    "promotion_countries": ["VN"],
+    "bootstrap_country": "JP",
+    "promotion_countries": ["IN"],
     "provider_country": "IN",
     "provider_country_label": "IN",
 
@@ -82,6 +82,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     "checkout_retry": 1,
     "upi_retry": 1,
     "provider_retry": 1,
+    "ideal_max_minor_amount": 50,
 
     # dump / debug
     "dump": False,
@@ -104,6 +105,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     # checkout modes
     "confirm_inline_pm": False,
     "update_tax_region": True,
+    "use_promotion_stage": False,
     "promo_mode": "campaign",
     "trial_days": 30,
 
@@ -125,8 +127,32 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     "UPI_UPDATE_CUSTOMER_DATA": "",
     "UPI_CHECKOUT_SNAPSHOT": "",
     "UPI_USE_FIXED_BILLING": "",
+    "UPI_USE_PROMOTION_STAGE": "",
     "UPI_FLOW_MODE": "",
     "UPI_CHECKOUT_COUNTRY": "",
+    "UPI_CHECKOUT_PROXY_COUNTRY": "",
+    "IDEAL_MAX_MINOR_AMOUNT": "",
+    "IDEAL_CHECKOUT_COUNTRY": "",
+    "IDEAL_CHECKOUT_PROXY_COUNTRY": "",
+    "IDEAL_PROVIDER_PROXY_COUNTRY": "",
+    "IDEAL_BROWSER_LOCALE": "",
+    "IDEAL_ELEMENTS_LOCALE": "",
+    "IDEAL_BROWSER_TIMEZONE": "",
+    "IDEAL_CHECKOUT_RETRY_MAX": "",
+    "IDEAL_MAX_RETRY": "",
+    "IDEAL_WORKERS": "",
+    "IDEAL_WORKERS_MAX": "",
+    "IDEAL_UPDATE_CUSTOMER_DATA": "",
+    "IDEAL_UPDATE_TAX_REGION": "",
+    "IDEAL_USE_FIXED_BILLING": "",
+    "IDEAL_EMAIL": "",
+    "IDEAL_NAME": "",
+    "IDEAL_LINE1": "",
+    "IDEAL_LINE2": "",
+    "IDEAL_CITY": "",
+    "IDEAL_POSTAL_CODE": "",
+    "IDEAL_STATE": "",
+    "IDEAL_BILLING_COUNTRY": "",
 
     # Stripe / ChatGPT constants
     "stripe_pk": "",
@@ -910,12 +936,18 @@ class ExtractionContext:
         if not proxy_seeds:
             raise RuntimeError("代理 Seed 已全部处于失败冷却")
         self.log(f"加载代理 Seed {len(proxy_seeds)} 条")
-        promotion_chain = " → ".join(self.promotion_countries)
-        self.log(
-            "严格代理策略: 每轮取一条 seed，派生 "
-            f"{self.bootstrap_country} Checkout → {promotion_chain} checkout/update → "
-            f"{self.provider_country} Stripe/UPI/approve"
-        )
+        if self.cfg_bool("use_promotion_stage", False):
+            promotion_chain = " → ".join(self.promotion_countries)
+            self.log(
+                "严格代理策略: 每轮取一条 seed，派生 "
+                f"{self.bootstrap_country} Checkout → {promotion_chain} checkout/update → "
+                f"{self.provider_country} Stripe/UPI/approve"
+            )
+        else:
+            self.log(
+                "严格代理策略: 每轮取一条 seed，派生 "
+                f"{self.bootstrap_country} Checkout → {self.provider_country} Stripe/UPI/approve"
+            )
         self.log(f"裸代理默认协议: {self.default_proxy_scheme()}://")
         self.log(f"本机前置代理: {proxy_short(self.pre_proxy_url())}")
         return proxy_seeds

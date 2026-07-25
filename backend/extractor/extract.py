@@ -217,6 +217,13 @@ def log_upi_proxy_chain(
     provider_proxy: str,
 ) -> None:
     explicit_chain = parse_proxy_chain_seed(proxy_seed)
+    if not _cfg_bool(ctx, "use_promotion_stage", False, "UPI_USE_PROMOTION_STAGE"):
+        ctx.log(
+            "proxy chain: "
+            f"{ctx.bootstrap_country} checkout={proxy_label(checkout_proxy)}; "
+            f"{ctx.provider_country} provider/approve={proxy_label(provider_proxy)}"
+        )
+        return
     if explicit_chain:
         promotion_chain = f"{ctx.promotion_country}={proxy_label(promotion_proxy)}"
     else:
@@ -264,55 +271,74 @@ def run_provider_flow(
                 )
         return current_ctx, current_amount
 
-    ctx.log(
-        f"{ctx.bootstrap_country} Bootstrap Stripe init "
-        f"(PM={billing['country']}, proxy={proxy_label(checkout_proxy)})..."
-    )
-    init_payload = stripe_init(ctx, checkout["cs_id"], stripe_pk, checkout_proxy)
-    if not checkout.get("processor_entity"):
-        processor_entity = infer_processor_entity(init_payload)
-        if processor_entity:
-            checkout["processor_entity"] = processor_entity
-            ctx.log(f"inferred processor_entity={processor_entity} from Stripe init")
-    inspect_init(init_payload, f"{ctx.bootstrap_country} Bootstrap")
-    if stop_event and stop_event.is_set():
-        raise RuntimeError("task stopped, skipping attempt")
-
     hosted_url = ""
     stripe_ctx: dict[str, Any] = {}
     amount = 0
-    for promotion_index, promotion_country in enumerate(ctx.promotion_countries, start=1):
-        current_promotion_proxy = proxy_for_country(promotion_proxy, promotion_country)
-        stage_label = f"{promotion_country} checkout/update {promotion_index}/{len(ctx.promotion_countries)}"
-        ctx.log(f"{stage_label}: proxy={proxy_label(current_promotion_proxy)}")
-        try:
-            promotion_chatgpt = build_chatgpt_session(
-                ctx, access_token, device_id, current_promotion_proxy, session_token
-            )
-            update_checkout_promotion(ctx, promotion_chatgpt, checkout, promotion_country)
-        except Exception as exc:
-            if is_checkout_not_active_error(exc):
-                raise
-            raise RuntimeError(f"promotion stage failed: {exc}") from exc
-        ctx.record_proxy_result("promotion", current_promotion_proxy, True, "promotion_update_success")
 
+    if _cfg_bool(ctx, "use_promotion_stage", False, "UPI_USE_PROMOTION_STAGE"):
         ctx.log(
-            f"{stage_label} then refresh Stripe through {ctx.provider_country}: "
-            f"proxy={proxy_label(provider_proxy)}"
+            f"{ctx.bootstrap_country} Bootstrap Stripe init "
+            f"(PM={billing['country']}, proxy={proxy_label(checkout_proxy)})..."
+        )
+        init_payload = stripe_init(ctx, checkout["cs_id"], stripe_pk, checkout_proxy)
+        if not checkout.get("processor_entity"):
+            processor_entity = infer_processor_entity(init_payload)
+            if processor_entity:
+                checkout["processor_entity"] = processor_entity
+                ctx.log(f"inferred processor_entity={processor_entity} from Stripe init")
+        inspect_init(init_payload, f"{ctx.bootstrap_country} Bootstrap")
+        if stop_event and stop_event.is_set():
+            raise RuntimeError("task stopped, skipping attempt")
+
+        for promotion_index, promotion_country in enumerate(ctx.promotion_countries, start=1):
+            current_promotion_proxy = proxy_for_country(promotion_proxy, promotion_country)
+            stage_label = f"{promotion_country} checkout/update {promotion_index}/{len(ctx.promotion_countries)}"
+            ctx.log(f"{stage_label}: proxy={proxy_label(current_promotion_proxy)}")
+            try:
+                promotion_chatgpt = build_chatgpt_session(
+                    ctx, access_token, device_id, current_promotion_proxy, session_token
+                )
+                update_checkout_promotion(ctx, promotion_chatgpt, checkout, promotion_country)
+            except Exception as exc:
+                if is_checkout_not_active_error(exc):
+                    raise
+                raise RuntimeError(f"promotion stage failed: {exc}") from exc
+            ctx.record_proxy_result("promotion", current_promotion_proxy, True, "promotion_update_success")
+
+            ctx.log(
+                f"{stage_label} then refresh Stripe through {ctx.provider_country}: "
+                f"proxy={proxy_label(provider_proxy)}"
+            )
+            init_payload = stripe_init(ctx, checkout["cs_id"], stripe_pk, provider_proxy)
+            hosted_url = str(init_payload.get("stripe_hosted_url") or hosted_url or "")
+            stripe_ctx, amount = inspect_init(
+                init_payload, f"{promotion_country} updated then {ctx.provider_country}"
+            )
+            ctx.record_checkout_zero_result(checkout_proxy, checkout_country, amount)
+            if amount == 0:
+                ctx.log("promotion amount is 0; continuing UPI extraction")
+                break
+            if promotion_index < len(ctx.promotion_countries):
+                ctx.log(f"{promotion_country} amount still non-zero; continuing next checkout/update", "[WARN] ")
+                continue
+            raise RuntimeError(f"zero promotion not active, amount minor={amount}; refusing non-zero UPI link")
+    else:
+        ctx.log(
+            "reference UPI flow: skip checkout/update promotion stage; "
+            f"Stripe init through {ctx.provider_country} provider={proxy_label(provider_proxy)}"
         )
         init_payload = stripe_init(ctx, checkout["cs_id"], stripe_pk, provider_proxy)
         hosted_url = str(init_payload.get("stripe_hosted_url") or hosted_url or "")
-        stripe_ctx, amount = inspect_init(
-            init_payload, f"{promotion_country} updated then {ctx.provider_country}"
-        )
+        if not checkout.get("processor_entity"):
+            processor_entity = infer_processor_entity(init_payload)
+            if processor_entity:
+                checkout["processor_entity"] = processor_entity
+                ctx.log(f"inferred processor_entity={processor_entity} from Stripe init")
+        stripe_ctx, amount = inspect_init(init_payload, f"{ctx.provider_country} provider")
         ctx.record_checkout_zero_result(checkout_proxy, checkout_country, amount)
-        if amount == 0:
-            ctx.log("promotion amount is 0; continuing UPI extraction")
-            break
-        if promotion_index < len(ctx.promotion_countries):
-            ctx.log(f"{promotion_country} amount still non-zero; continuing next checkout/update", "[WARN] ")
-            continue
-        raise RuntimeError(f"zero promotion not active, amount minor={amount}; refusing non-zero UPI link")
+        if _cfg_bool(ctx, "require_zero", True, "UPI_REQUIRE_ZERO") and amount != 0:
+            raise RuntimeError(f"zero promotion not active, amount minor={amount}; refusing non-zero UPI link")
+        ctx.log("amount is 0; continuing UPI extraction" if amount == 0 else f"non-zero amount accepted by config: minor={amount}")
 
     stripe = new_session(ctx, provider_proxy)
     stripe.headers.update({"User-Agent": random_user_agent(), "Accept-Language": "en-US,en;q=0.9"})
@@ -1035,8 +1061,11 @@ def _configured_countries(name: str, default: str) -> list[str]:
 
 def config_from_env(script_dir: str | Path | None = None) -> dict[str, Any]:
     base_dir = Path(script_dir) if script_dir is not None else Path.cwd()
-    bootstrap_country = _configured_country("UPI_BOOTSTRAP_COUNTRY", os.environ.get("UPI_CHECKOUT_COUNTRY", "IN"))
-    promotion_countries = _configured_countries("UPI_PROMOTION_COUNTRY", "VN")
+    bootstrap_country = _configured_country(
+        "UPI_BOOTSTRAP_COUNTRY",
+        os.environ.get("UPI_CHECKOUT_PROXY_COUNTRY", "JP"),
+    )
+    promotion_countries = _configured_countries("UPI_PROMOTION_COUNTRY", "IN")
     provider_country = _configured_country("UPI_PROVIDER_COUNTRY", os.environ.get("UPI_BILLING_COUNTRY", "IN"))
     config: dict[str, Any] = {
         "script_dir": str(base_dir),
@@ -1057,6 +1086,7 @@ def config_from_env(script_dir: str | Path | None = None) -> dict[str, Any]:
         "require_zero": _env_bool("UPI_REQUIRE_ZERO", True),
         "checkout_retry": _env_int("UPI_CHECKOUT_RETRY_MAX", 5),
         "provider_retry": _env_int("UPI_PROVIDER_RETRY_MAX", 3),
+        "ideal_max_minor_amount": _env_int("IDEAL_MAX_MINOR_AMOUNT", 50, minimum=0),
         "dump": _env_bool("UPI_DUMP", False),
         "dump_limit": _env_int("UPI_DUMP_LIMIT", 6000, minimum=500),
         "proxy_score": _env_bool("UPI_PROXY_SCORE", True),
@@ -1071,6 +1101,7 @@ def config_from_env(script_dir: str | Path | None = None) -> dict[str, Any]:
         "zero_cache_ttl": _env_int("UPI_ZERO_CACHE_TTL", 86400, minimum=0),
         "confirm_inline_pm": _env_bool("UPI_CONFIRM_INLINE_PM", False),
         "update_tax_region": _env_bool("UPI_UPDATE_TAX_REGION", False),
+        "use_promotion_stage": _env_bool("UPI_USE_PROMOTION_STAGE", False),
         "pre_proxy": (
             os.environ.get("UPI_PRE_PROXY", "").strip()
             or os.environ.get("PP_PRE_PROXY", "").strip()
@@ -1097,7 +1128,7 @@ def config_from_env(script_dir: str | Path | None = None) -> dict[str, Any]:
         "billing_city": os.environ.get("UPI_CITY", "Kolkata").strip() or "Kolkata",
         "billing_postal_code": os.environ.get("UPI_POSTAL_CODE", "700016").strip() or "700016",
         "billing_state": os.environ.get("UPI_STATE", "WB").strip() or "WB",
-        "checkout_country": os.environ.get("UPI_CHECKOUT_COUNTRY", bootstrap_country).strip() or bootstrap_country,
+        "checkout_country": os.environ.get("UPI_CHECKOUT_COUNTRY", "IN").strip() or "IN",
     }
     for key in (
         "PP_TOKEN",
@@ -1115,6 +1146,29 @@ def config_from_env(script_dir: str | Path | None = None) -> dict[str, Any]:
         "UPI_UPDATE_CUSTOMER_DATA",
         "UPI_CHECKOUT_SNAPSHOT",
         "UPI_USE_FIXED_BILLING",
+        "UPI_USE_PROMOTION_STAGE",
+        "IDEAL_MAX_MINOR_AMOUNT",
+        "IDEAL_CHECKOUT_COUNTRY",
+        "IDEAL_CHECKOUT_PROXY_COUNTRY",
+        "IDEAL_PROVIDER_PROXY_COUNTRY",
+        "IDEAL_BROWSER_LOCALE",
+        "IDEAL_ELEMENTS_LOCALE",
+        "IDEAL_BROWSER_TIMEZONE",
+        "IDEAL_CHECKOUT_RETRY_MAX",
+        "IDEAL_MAX_RETRY",
+        "IDEAL_WORKERS",
+        "IDEAL_WORKERS_MAX",
+        "IDEAL_UPDATE_CUSTOMER_DATA",
+        "IDEAL_UPDATE_TAX_REGION",
+        "IDEAL_USE_FIXED_BILLING",
+        "IDEAL_EMAIL",
+        "IDEAL_NAME",
+        "IDEAL_LINE1",
+        "IDEAL_LINE2",
+        "IDEAL_CITY",
+        "IDEAL_POSTAL_CODE",
+        "IDEAL_STATE",
+        "IDEAL_BILLING_COUNTRY",
     ):
         if key in os.environ:
             config[key] = os.environ[key]

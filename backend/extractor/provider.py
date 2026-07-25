@@ -350,7 +350,6 @@ def stripe_create_upi_pm(
     billing: dict[str, str],
     stripe_ctx: dict[str, Any],
 ) -> str:
-    _ = stripe_ctx
     body: dict[str, Any] = {
         "billing_details[name]": billing.get("name") or "Aisha Sharma",
         "billing_details[email]": billing.get("email") or "redacted@example.invalid",
@@ -359,8 +358,23 @@ def stripe_create_upi_pm(
         "billing_details[address][city]": billing.get("city") or "Kolkata",
         "billing_details[address][postal_code]": billing.get("postal_code") or "700016",
         "type": "upi",
+        "payment_user_agent": f"stripe.js/{random_runtime_version(ctx)}; stripe-js-v3/{random_runtime_version(ctx)}; payment-element; deferred-intent",
+        "referrer": "https://chatgpt.com",
+        "time_on_page": str(random.randint(25000, 55000)),
         "client_attribution_metadata[checkout_session_id]": cs_id,
+        "client_attribution_metadata[client_session_id]": str(stripe_ctx.get("stripe_js_id") or ""),
+        "client_attribution_metadata[checkout_config_id]": stripe_ctx.get("config_id") or "",
+        "client_attribution_metadata[elements_session_id]": stripe_ctx.get("elements_session_id") or "",
+        "client_attribution_metadata[elements_session_config_id]": stripe_ctx.get("elements_session_config_id") or "",
+        "client_attribution_metadata[merchant_integration_source]": "elements",
+        "client_attribution_metadata[merchant_integration_subtype]": "payment-element",
+        "client_attribution_metadata[merchant_integration_version]": "2021",
+        "client_attribution_metadata[payment_intent_creation_flow]": "deferred",
+        "client_attribution_metadata[payment_method_selection_flow]": "automatic",
+        "client_attribution_metadata[merchant_integration_additional_elements][0]": "payment",
+        "client_attribution_metadata[merchant_integration_additional_elements][1]": "address",
         "key": stripe_pk,
+        "_stripe_version": STRIPE_VERSION_FULL,
     }
     if billing.get("state"):
         body["billing_details[address][state]"] = billing["state"]

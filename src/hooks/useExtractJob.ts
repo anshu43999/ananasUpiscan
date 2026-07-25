@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   cancelExtractJob,
+  extractJobWsUrl,
   getExtractJob,
   startExtractJob,
   type ExtractJobLog,
@@ -8,97 +9,171 @@ import {
   type ExtractJobStatus,
   type StartExtractOptions,
 } from '../api/extract';
-import { useExtractWebSocket } from './useExtractWebSocket';
 
-interface UseExtractJobReturn {
-  job: ExtractJobResponse | null;
+interface UseExtractJobsReturn {
+  jobs: ExtractJobResponse[];
   loading: boolean;
   error: string | null;
-  submit: (options: StartExtractOptions) => Promise<void>;
-  cancel: () => Promise<void>;
-  reset: () => void;
+  activeCount: number;
+  submit: (options: StartExtractOptions) => Promise<string | null>;
+  cancel: (jobId: string) => Promise<void>;
+  remove: (jobId: string) => void;
+  clearFinished: () => void;
 }
+
+type WsMessage =
+  | { type: 'log'; log: ExtractJobLog }
+  | { type: 'snapshot'; job: ExtractJobResponse };
 
 const TERMINAL: ExtractJobStatus[] = ['completed', 'failed', 'cancelled'];
 
-export function useExtractJob(): UseExtractJobReturn {
-  const [job, setJob] = useState<ExtractJobResponse | null>(null);
+function isTerminal(status: ExtractJobStatus): boolean {
+  return TERMINAL.includes(status);
+}
+
+function mergeJobLog(job: ExtractJobResponse, log: ExtractJobLog): ExtractJobResponse {
+  const exists = job.logs.some(
+    (item) => item.timestamp === log.timestamp && item.message === log.message,
+  );
+  if (exists) return job;
+  return { ...job, logs: [...job.logs, log] };
+}
+
+export function useExtractJobs(): UseExtractJobsReturn {
+  const [jobs, setJobs] = useState<ExtractJobResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [jobId, setJobId] = useState<string | null>(null);
   const mountedRef = useRef(true);
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollingRefs = useRef(new Map<string, ReturnType<typeof setInterval>>());
+  const socketRefs = useRef(new Map<string, WebSocket>());
+
+  const stopPolling = useCallback((jobId: string) => {
+    const timer = pollingRefs.current.get(jobId);
+    if (!timer) return;
+    clearInterval(timer);
+    pollingRefs.current.delete(jobId);
+  }, []);
+
+  const closeSocket = useCallback((jobId: string) => {
+    const socket = socketRefs.current.get(jobId);
+    if (!socket) return;
+    socket.close();
+    socketRefs.current.delete(jobId);
+  }, []);
+
+  const applySnapshot = useCallback(
+    (snapshot: ExtractJobResponse) => {
+      setJobs((current) => {
+        const index = current.findIndex((item) => item.job_id === snapshot.job_id);
+        if (index === -1) return current;
+        const next = [...current];
+        next[index] = snapshot;
+        return next;
+      });
+      if (isTerminal(snapshot.status)) {
+        stopPolling(snapshot.job_id);
+        closeSocket(snapshot.job_id);
+      }
+    },
+    [closeSocket, stopPolling],
+  );
+
+  const mergeLog = useCallback((jobId: string, log: ExtractJobLog) => {
+    setJobs((current) =>
+      current.map((job) => (job.job_id === jobId ? mergeJobLog(job, log) : job)),
+    );
+  }, []);
+
+  const startPolling = useCallback(
+    (jobId: string) => {
+      stopPolling(jobId);
+      const timer = setInterval(async () => {
+        try {
+          const snapshot = await getExtractJob(jobId);
+          if (!mountedRef.current) return;
+          applySnapshot(snapshot);
+        } catch (e: unknown) {
+          if (!mountedRef.current) return;
+          setError(e instanceof Error ? e.message : '获取任务状态失败');
+        }
+      }, 3000);
+      pollingRefs.current.set(jobId, timer);
+    },
+    [applySnapshot, stopPolling],
+  );
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      if (pollingRef.current) clearInterval(pollingRef.current);
+      pollingRefs.current.forEach((timer) => clearInterval(timer));
+      pollingRefs.current.clear();
+      socketRefs.current.forEach((socket) => socket.close());
+      socketRefs.current.clear();
     };
   }, []);
 
-  const mergeLog = useCallback((log: ExtractJobLog) => {
-    setJob((current) => {
-      if (!current) return current;
-      const exists = current.logs.some(
-        (item) => item.timestamp === log.timestamp && item.message === log.message,
-      );
-      if (exists) return current;
-      return { ...current, logs: [...current.logs, log] };
+  useEffect(() => {
+    const activeIds = new Set(
+      jobs.filter((job) => !isTerminal(job.status)).map((job) => job.job_id),
+    );
+
+    socketRefs.current.forEach((_socket, jobId) => {
+      if (!activeIds.has(jobId)) closeSocket(jobId);
     });
-  }, []);
 
-  const applySnapshot = useCallback((snapshot: ExtractJobResponse) => {
-    setJob(snapshot);
-    if (TERMINAL.includes(snapshot.status) && pollingRef.current) {
-      clearInterval(pollingRef.current);
-      pollingRef.current = null;
-    }
-  }, []);
+    activeIds.forEach((jobId) => {
+      if (socketRefs.current.has(jobId)) return;
 
-  useExtractWebSocket({
-    jobId,
-    onLog: mergeLog,
-    onSnapshot: applySnapshot,
-    onError: setError,
-  });
+      const socket = new WebSocket(extractJobWsUrl(jobId));
+      socketRefs.current.set(jobId, socket);
 
-  const startPolling = useCallback((id: string) => {
-    if (pollingRef.current) clearInterval(pollingRef.current);
-    pollingRef.current = setInterval(async () => {
-      try {
-        const snapshot = await getExtractJob(id);
-        if (!mountedRef.current) return;
-        applySnapshot(snapshot);
-      } catch (e: unknown) {
-        if (!mountedRef.current) return;
-        setError(e instanceof Error ? e.message : 'Failed to fetch job status');
-      }
-    }, 3000);
-  }, [applySnapshot]);
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data as string) as WsMessage;
+          if (data.type === 'log') mergeLog(jobId, data.log);
+          if (data.type === 'snapshot') applySnapshot(data.job);
+        } catch {
+          setError('解析 WebSocket 消息失败');
+        }
+      };
+
+      socket.onerror = () => {
+        if (socketRefs.current.get(jobId) === socket) {
+          setError(`任务 ${jobId.slice(0, 8)} WebSocket 连接失败`);
+        }
+      };
+
+      socket.onclose = () => {
+        if (socketRefs.current.get(jobId) === socket) {
+          socketRefs.current.delete(jobId);
+        }
+      };
+    });
+  }, [applySnapshot, closeSocket, jobs, mergeLog]);
 
   const submit = useCallback(
-    async (options: StartExtractOptions) => {
+    async (options: StartExtractOptions): Promise<string | null> => {
       setLoading(true);
       setError(null);
-      setJob(null);
-      setJobId(null);
 
       try {
         const created = await startExtractJob(options);
-        if (!mountedRef.current) return;
+        if (!mountedRef.current) return null;
         const initial: ExtractJobResponse = {
           job_id: created.job_id,
           status: 'pending',
           logs: [],
           result: null,
         };
-        setJob(initial);
-        setJobId(created.job_id);
+        setJobs((current) => [initial, ...current]);
         startPolling(created.job_id);
+        return created.job_id;
       } catch (e: unknown) {
-        if (!mountedRef.current) return;
-        setError(e instanceof Error ? e.message : 'Failed to submit job');
+        if (mountedRef.current) {
+          setError(e instanceof Error ? e.message : '提交任务失败');
+        }
+        return null;
       } finally {
         if (mountedRef.current) setLoading(false);
       }
@@ -106,22 +181,31 @@ export function useExtractJob(): UseExtractJobReturn {
     [startPolling],
   );
 
-  const cancel = useCallback(async () => {
-    if (!jobId) return;
-    const snapshot = await cancelExtractJob(jobId);
-    if (mountedRef.current) applySnapshot(snapshot);
-  }, [applySnapshot, jobId]);
+  const cancel = useCallback(
+    async (jobId: string) => {
+      const snapshot = await cancelExtractJob(jobId);
+      if (mountedRef.current) applySnapshot(snapshot);
+    },
+    [applySnapshot],
+  );
 
-  const reset = useCallback(() => {
-    if (pollingRef.current) {
-      clearInterval(pollingRef.current);
-      pollingRef.current = null;
-    }
-    setJob(null);
-    setJobId(null);
-    setError(null);
-    setLoading(false);
+  const remove = useCallback(
+    (jobId: string) => {
+      stopPolling(jobId);
+      closeSocket(jobId);
+      setJobs((current) => current.filter((job) => job.job_id !== jobId));
+    },
+    [closeSocket, stopPolling],
+  );
+
+  const clearFinished = useCallback(() => {
+    setJobs((current) => current.filter((job) => !isTerminal(job.status)));
   }, []);
 
-  return { job, loading, error, submit, cancel, reset };
+  const activeCount = useMemo(
+    () => jobs.filter((job) => !isTerminal(job.status)).length,
+    [jobs],
+  );
+
+  return { jobs, loading, error, activeCount, submit, cancel, remove, clearFinished };
 }

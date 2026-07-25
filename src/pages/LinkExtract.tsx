@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import QRCode from 'qrcode';
-import { useExtractJob } from '../hooks/useExtractJob';
+import { useExtractJobs } from '../hooks/useExtractJob';
 import {
   submitPublisherCheckout,
   testProxyChain,
+  type ExtractJobResponse,
   type ProxyChainTestResult,
   type StartExtractOptions,
 } from '../api/extract';
@@ -34,19 +35,18 @@ const PROXY_STAGE_LABELS: Record<(typeof PROXY_STAGES)[number], string> = {
   provider: '支付',
   approve: '确认',
 };
-const CUSTOM_PROXY_STAGE_LABELS: Record<(typeof CUSTOM_PROXY_STAGES)[number], string> = {
-  checkout: 'IN 代理（下单 / 支付确认）',
-  promotion: 'VN 代理（优惠阶段）',
-};
 const STORAGE_KEY_PROXY = 'upiscan_extract_proxy';
 const STORAGE_KEY_PUBLISHER = 'upiscan_publisher_handoff';
 const PUBLISHER_UPSTREAM_DEFAULT = 'https://foarge.com/api/publisher/v1';
 
 type ProxyStage = (typeof PROXY_STAGES)[number];
+type PaymentMethod = 'upi' | 'ideal';
 type ProxySourceMode = 'builtin' | 'custom';
 type PublisherStatus = 'idle' | 'submitting' | 'success' | 'error';
+type AudioContextRef = MutableRefObject<AudioContext | null>;
 
 interface SavedProxyState {
+  paymentMethod?: PaymentMethod;
   proxySourceMode?: ProxySourceMode;
   proxyChainMode: string;
   manualRegions: Record<ProxyStage, string>;
@@ -83,25 +83,42 @@ function loadPublisherState(): SavedPublisherState | null {
 function buildProxyChain(
   mode: string,
   manualRegions: Record<ProxyStage, string>,
+  paymentMethod: PaymentMethod,
 ): Record<string, string> | undefined {
   if (mode === 'default') return undefined;
   if (mode === 'india') {
-    return { checkout: 'IN', promotion: 'VN', provider: 'IN', approve: 'IN' };
+    return { checkout: 'JP', promotion: 'IN', provider: 'IN', approve: 'IN' };
+  }
+  if (mode === 'ideal') {
+    return { checkout: 'JP', promotion: 'NL', provider: 'NL', approve: 'NL' };
   }
   if (mode === 'manual') return { ...manualRegions };
+  if (paymentMethod === 'ideal') {
+    return { checkout: 'JP', promotion: 'NL', provider: 'NL', approve: 'NL' };
+  }
   return undefined;
 }
 
 function configFromProxyChain(
   chain: Record<string, string> | undefined,
   customExportProxy: string,
+  paymentMethod: PaymentMethod,
 ): Record<string, unknown> | undefined {
   const config: Record<string, unknown> = {};
+  if (paymentMethod === 'ideal') {
+    config.checkout_country = 'NL';
+    config.billing_country = 'NL';
+    config.provider_country = chain?.provider || 'NL';
+    config.provider_country_label = chain?.provider || 'NL';
+    config.browser_locale = 'nl-NL';
+    config.elements_locale = 'nl';
+    config.browser_timezone = 'Europe/Amsterdam';
+  }
   if (chain?.checkout) config.bootstrap_country = chain.checkout;
   if (chain?.promotion) config.promotion_countries = [chain.promotion];
   if (chain?.provider) {
     config.provider_country = chain.provider;
-    config.billing_country = chain.provider;
+    if (paymentMethod !== 'ideal') config.billing_country = chain.provider;
   }
   if (customExportProxy.trim()) config.pre_proxy = customExportProxy.trim();
   return Object.keys(config).length ? config : undefined;
@@ -114,35 +131,303 @@ function parseProxySeeds(value: string): string[] {
     .filter((line) => line && !line.startsWith('#'));
 }
 
-function buildProxySeedChains(proxyTexts: Record<ProxyStage, string>): Array<Record<string, string>> {
+function buildProxySeedChains(
+  proxyTexts: Record<ProxyStage, string>,
+  paymentMethod: PaymentMethod,
+): Array<Record<string, string>> {
   const checkout = parseProxySeeds(proxyTexts.checkout);
   const promotion = parseProxySeeds(proxyTexts.promotion);
   if (!checkout.length || !promotion.length) return [];
 
   const total = Math.max(checkout.length, promotion.length);
-  return Array.from({ length: total }, (_, index) => ({
-    checkout: checkout[index % checkout.length],
-    promotion: promotion[index % promotion.length],
-    provider: checkout[index % checkout.length],
-  }));
+  return Array.from({ length: total }, (_, index) => {
+    const firstProxy = checkout[index % checkout.length];
+    const secondProxy = promotion[index % promotion.length];
+    return paymentMethod === 'ideal'
+      ? { checkout: firstProxy, promotion: secondProxy, provider: secondProxy }
+      : { checkout: firstProxy, promotion: secondProxy, provider: secondProxy };
+  });
+}
+
+function customProxyStageLabel(paymentMethod: PaymentMethod, stage: (typeof CUSTOM_PROXY_STAGES)[number]): string {
+  if (paymentMethod === 'ideal') {
+    return stage === 'checkout'
+      ? 'JP 代理（前段 / 创建 checkout）'
+      : 'NL 代理（iDEAL provider）';
+  }
+  return stage === 'checkout'
+    ? 'JP 代理（创建 checkout）'
+    : 'IN 代理（UPI provider / approve）';
+}
+
+function customProxyEmptyText(paymentMethod: PaymentMethod): string {
+  return paymentMethod === 'ideal'
+    ? '请分别输入 JP 代理和 NL 代理；NL 会用于 iDEAL provider'
+    : '请分别输入 JP 代理和 IN 代理；JP 创建 checkout，IN 用于 UPI provider / approve';
+}
+
+function defaultManualRegions(paymentMethod: PaymentMethod): Record<ProxyStage, string> {
+  return paymentMethod === 'ideal'
+    ? { checkout: 'JP', promotion: 'NL', provider: 'NL', approve: 'NL' }
+    : { checkout: 'JP', promotion: 'IN', provider: 'IN', approve: 'IN' };
+}
+
+function getNotificationAudioContext(ref: AudioContextRef): AudioContext | null {
+  if (typeof window === 'undefined') return null;
+  if (ref.current) return ref.current;
+
+  const AudioContextCtor =
+    window.AudioContext ||
+    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextCtor) return null;
+
+  ref.current = new AudioContextCtor();
+  return ref.current;
+}
+
+function primeResultSound(ref: AudioContextRef): void {
+  const ctx = getNotificationAudioContext(ref);
+  if (!ctx || ctx.state !== 'suspended') return;
+  void ctx.resume().catch(() => undefined);
+}
+
+function scheduleResultTone(
+  ctx: AudioContext,
+  startAt: number,
+  frequency: number,
+  duration: number,
+  volume: number,
+): void {
+  const oscillator = ctx.createOscillator();
+  const gain = ctx.createGain();
+  oscillator.type = 'sine';
+  oscillator.frequency.setValueAtTime(frequency, startAt);
+  gain.gain.setValueAtTime(0.0001, startAt);
+  gain.gain.exponentialRampToValueAtTime(volume, startAt + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
+  oscillator.connect(gain);
+  gain.connect(ctx.destination);
+  oscillator.start(startAt);
+  oscillator.stop(startAt + duration + 0.03);
+}
+
+function playResultSound(ref: AudioContextRef): void {
+  const ctx = getNotificationAudioContext(ref);
+  if (!ctx) return;
+
+  const play = () => {
+    const startAt = ctx.currentTime + 0.02;
+    scheduleResultTone(ctx, startAt, 880, 0.15, 0.08);
+    scheduleResultTone(ctx, startAt + 0.17, 1174.66, 0.2, 0.07);
+  };
+
+  if (ctx.state === 'suspended') {
+    void ctx.resume().then(play).catch(() => undefined);
+    return;
+  }
+  play();
+}
+
+interface PublisherJobState {
+  status: PublisherStatus;
+  message: string;
+}
+
+interface ExtractJobCardProps {
+  job: ExtractJobResponse;
+  publisherState?: PublisherJobState;
+  publisherEnabled: boolean;
+  canSubmitPublisher: boolean;
+  onCancel: (jobId: string) => void;
+  onRemove: (jobId: string) => void;
+  onSubmitPublisher: (job: ExtractJobResponse) => void;
+}
+
+function ExtractJobCard({
+  job,
+  publisherState,
+  publisherEnabled,
+  canSubmitPublisher,
+  onCancel,
+  onRemove,
+  onSubmitPublisher,
+}: ExtractJobCardProps) {
+  const [logsExpanded, setLogsExpanded] = useState(true);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!job.result?.url) {
+      setQrDataUrl(null);
+      return;
+    }
+    let active = true;
+    QRCode.toDataURL(job.result.url, { width: 220, margin: 1 })
+      .then((value) => {
+        if (active) setQrDataUrl(value);
+      })
+      .catch(() => {
+        if (active) setQrDataUrl(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [job.result?.url]);
+
+  const handleCopyUrl = useCallback(async () => {
+    if (!job.result?.url) return;
+    await navigator.clipboard.writeText(job.result.url);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  }, [job.result?.url]);
+
+  const canCancel = job.status === 'pending' || job.status === 'running';
+  const canRemove = job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled';
+  const publisherSubmitting = publisherState?.status === 'submitting';
+
+  return (
+    <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-800">任务结果</h3>
+          <p className="font-mono text-xs text-gray-400">{job.job_id}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_COLORS[job.status] || STATUS_COLORS.pending}`}>
+            {STATUS_LABELS[job.status] || job.status}
+          </span>
+          {canCancel && (
+            <button
+              type="button"
+              onClick={() => onCancel(job.job_id)}
+              className="rounded border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
+            >
+              取消
+            </button>
+          )}
+          {canRemove && (
+            <button
+              type="button"
+              onClick={() => onRemove(job.job_id)}
+              className="rounded border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-50"
+            >
+              移除
+            </button>
+          )}
+        </div>
+      </div>
+
+      {(job.status === 'pending' || job.status === 'running') && (
+        <div className="flex items-center gap-3 text-sm text-gray-500">
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-purple-500 border-t-transparent" />
+          正在提炼支付链接...
+        </div>
+      )}
+
+      {job.status === 'completed' && job.result?.url && (
+        <div className="grid gap-4 lg:grid-cols-[1fr_240px]">
+          <div className="rounded-lg bg-gray-50 p-4">
+            <label className="mb-2 block text-xs font-medium text-gray-500">支付链接</label>
+            <div className="flex gap-2">
+              <code className="min-w-0 flex-1 break-all rounded border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700">
+                {job.result.url}
+              </code>
+              <button
+                type="button"
+                onClick={handleCopyUrl}
+                className="shrink-0 rounded border border-purple-200 px-3 py-2 text-xs font-medium text-purple-700 hover:bg-purple-50"
+              >
+                {copied ? '已复制' : '复制'}
+              </button>
+            </div>
+            {publisherEnabled && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onSubmitPublisher(job)}
+                  disabled={!canSubmitPublisher || publisherSubmitting}
+                  className="rounded border border-purple-200 bg-white px-3 py-1.5 text-xs font-medium text-purple-700 hover:bg-purple-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-300"
+                >
+                  {publisherSubmitting ? '提交中...' : '提交支付长链'}
+                </button>
+                {publisherState?.message && (
+                  <span
+                    className={`rounded px-2 py-1 text-xs ${
+                      publisherState.status === 'error'
+                        ? 'bg-red-50 text-red-700'
+                        : publisherState.status === 'success'
+                          ? 'bg-green-50 text-green-700'
+                          : 'bg-blue-50 text-blue-700'
+                    }`}
+                  >
+                    {publisherState.message}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+          {qrDataUrl && (
+            <div className="flex justify-center rounded-lg border border-gray-200 bg-white p-3">
+              <img src={qrDataUrl} alt="支付二维码" className="h-52 w-52" />
+            </div>
+          )}
+        </div>
+      )}
+
+      {job.status === 'failed' && (
+        <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
+          {job.error || '提取失败'}
+        </div>
+      )}
+
+      {job.logs.length > 0 && (
+        <div>
+          <button
+            type="button"
+            onClick={() => setLogsExpanded((value) => !value)}
+            className="text-xs text-gray-500 hover:text-gray-700"
+          >
+            {logsExpanded ? '隐藏日志' : '显示日志'} ({job.logs.length})
+          </button>
+          {logsExpanded && (
+            <div className="mt-2 max-h-80 space-y-1 overflow-y-auto rounded-lg bg-gray-950 p-3">
+              {job.logs.map((log, index) => (
+                <div
+                  key={`${log.timestamp}-${index}`}
+                  className={`font-mono text-xs ${
+                    log.level === 'error'
+                      ? 'text-red-300'
+                      : log.level === 'warn'
+                        ? 'text-yellow-300'
+                        : 'text-gray-300'
+                  }`}
+                >
+                  <span className="text-gray-500">[{new Date(log.timestamp).toLocaleTimeString()}]</span>{' '}
+                  {log.message}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function LinkExtract() {
-  const { job, loading, error, submit, cancel, reset } = useExtractJob();
-  const autoPublisherJobRef = useRef<string | null>(null);
+  const { jobs, loading, error, activeCount, submit, cancel, remove, clearFinished } = useExtractJobs();
+  const autoPublisherJobRef = useRef<Set<string>>(new Set());
+  const resultSoundJobRef = useRef<Set<string>>(new Set());
+  const resultAudioContextRef = useRef<AudioContext | null>(null);
 
   const [accessToken, setAccessToken] = useState('');
   const [sessionToken, setSessionToken] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('upi');
   const [billingCountry, setBillingCountry] = useState('IN');
   const [captureDiagnostics, setCaptureDiagnostics] = useState(false);
   const [proxySourceMode, setProxySourceMode] = useState<ProxySourceMode>('builtin');
   const [proxyChainMode, setProxyChainMode] = useState('default');
-  const [manualRegions, setManualRegions] = useState<Record<ProxyStage, string>>({
-    checkout: 'IN',
-    promotion: 'VN',
-    provider: 'IN',
-    approve: 'IN',
-  });
+  const [manualRegions, setManualRegions] = useState<Record<ProxyStage, string>>(defaultManualRegions('upi'));
   const [customProxyTexts, setCustomProxyTexts] = useState<Record<ProxyStage, string>>({
     checkout: '',
     promotion: '',
@@ -152,25 +437,27 @@ export function LinkExtract() {
   const [customExportProxy, setCustomExportProxy] = useState('');
   const [testResult, setTestResult] = useState<ProxyChainTestResult | null>(null);
   const [testLoading, setTestLoading] = useState(false);
-  const [logsExpanded, setLogsExpanded] = useState(true);
-  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [jobAccessTokens, setJobAccessTokens] = useState<Record<string, string>>({});
   const [publisherEnabled, setPublisherEnabled] = useState(false);
   const [publisherApiBase, setPublisherApiBase] = useState(PUBLISHER_UPSTREAM_DEFAULT);
   const [publisherApiKey, setPublisherApiKey] = useState(getApiKey() || '');
   const [publisherTaskId, setPublisherTaskId] = useState('');
   const [publisherAutoSubmit, setPublisherAutoSubmit] = useState(false);
-  const [publisherStatus, setPublisherStatus] = useState<PublisherStatus>('idle');
-  const [publisherMessage, setPublisherMessage] = useState('');
+  const [publisherNotice, setPublisherNotice] = useState('');
+  const [publisherByJob, setPublisherByJob] = useState<Record<string, PublisherJobState>>({});
 
   const proxyChain = useMemo(
-    () => buildProxyChain(proxyChainMode, manualRegions),
-    [manualRegions, proxyChainMode],
+    () => buildProxyChain(proxyChainMode, manualRegions, paymentMethod),
+    [manualRegions, paymentMethod, proxyChainMode],
   );
 
   useEffect(() => {
     const saved = loadProxyState();
     if (!saved) return;
+    if (saved.paymentMethod) {
+      setPaymentMethod(saved.paymentMethod);
+      setBillingCountry(saved.paymentMethod === 'ideal' ? 'NL' : 'IN');
+    }
     setProxySourceMode(saved.proxySourceMode || 'builtin');
     setProxyChainMode(saved.proxyChainMode);
     setManualRegions((current) => ({ ...current, ...saved.manualRegions }));
@@ -195,39 +482,44 @@ export function LinkExtract() {
     setPublisherAutoSubmit(saved.autoSubmit);
   }, []);
 
-  useEffect(() => {
-    if (!job?.result?.url) {
-      setQrDataUrl(null);
-      return;
-    }
-    QRCode.toDataURL(job.result.url, { width: 220, margin: 1 })
-      .then(setQrDataUrl)
-      .catch(() => setQrDataUrl(null));
-  }, [job?.result?.url]);
+  const handlePaymentMethodChange = useCallback((value: PaymentMethod) => {
+    setPaymentMethod(value);
+    setBillingCountry(value === 'ideal' ? 'NL' : 'IN');
+    setManualRegions(defaultManualRegions(value));
+    setProxyChainMode((current) => {
+      if (current === 'manual') return current;
+      return 'default';
+    });
+    setTestResult(null);
+  }, []);
 
   const handleSubmit = useCallback(
     async (event: React.FormEvent) => {
       event.preventDefault();
       const token = accessToken.trim();
       if (!token) return;
-      const proxySeedChains = proxySourceMode === 'custom' ? buildProxySeedChains(customProxyTexts) : [];
+      primeResultSound(resultAudioContextRef);
+      const proxySeedChains = proxySourceMode === 'custom' ? buildProxySeedChains(customProxyTexts, paymentMethod) : [];
       if (proxySourceMode === 'custom' && proxySeedChains.length === 0) return;
 
       const options: StartExtractOptions = {
         access_token: token,
         session_token: sessionToken.trim() || undefined,
-        payment_method: 'upi',
+        payment_method: paymentMethod,
         payment_page_mode: 'custom',
         language: 'auto',
-        billing_country: proxyChain?.provider || billingCountry,
+        billing_country: paymentMethod === 'ideal' ? 'NL' : proxyChain?.provider || billingCountry,
         proxy_chain: proxyChain,
         proxy_seed_chains: proxySeedChains.length ? proxySeedChains : undefined,
         custom_export_proxy: customExportProxy.trim() || undefined,
         capture_diagnostics: captureDiagnostics,
-        config: configFromProxyChain(proxyChain, customExportProxy),
+        config: configFromProxyChain(proxyChain, customExportProxy, paymentMethod),
       };
 
-      await submit(options);
+      const jobId = await submit(options);
+      if (jobId) {
+        setJobAccessTokens((current) => ({ ...current, [jobId]: token }));
+      }
     },
     [
       accessToken,
@@ -235,6 +527,7 @@ export function LinkExtract() {
       captureDiagnostics,
       customExportProxy,
       customProxyTexts,
+      paymentMethod,
       proxyChain,
       proxySourceMode,
       sessionToken,
@@ -244,6 +537,7 @@ export function LinkExtract() {
 
   const handleSaveProxy = useCallback(() => {
     const state: SavedProxyState = {
+      paymentMethod,
       proxySourceMode,
       proxyChainMode,
       manualRegions,
@@ -251,7 +545,7 @@ export function LinkExtract() {
       customExportProxy,
     };
     localStorage.setItem(STORAGE_KEY_PROXY, JSON.stringify(state));
-  }, [customExportProxy, customProxyTexts, manualRegions, proxyChainMode, proxySourceMode]);
+  }, [customExportProxy, customProxyTexts, manualRegions, paymentMethod, proxyChainMode, proxySourceMode]);
 
   const handleClearProxy = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY_PROXY);
@@ -277,13 +571,6 @@ export function LinkExtract() {
     }
   }, [proxyChain]);
 
-  const handleCopyUrl = useCallback(async () => {
-    if (!job?.result?.url) return;
-    await navigator.clipboard.writeText(job.result.url);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1800);
-  }, [job?.result?.url]);
-
   const handleSavePublisher = useCallback(() => {
     if (publisherApiKey.trim()) setApiKey(publisherApiKey.trim());
     const state: SavedPublisherState = {
@@ -293,82 +580,119 @@ export function LinkExtract() {
       autoSubmit: publisherAutoSubmit,
     };
     localStorage.setItem(STORAGE_KEY_PUBLISHER, JSON.stringify(state));
-    setPublisherStatus('idle');
-    setPublisherMessage('发布接口配置已保存');
+    setPublisherNotice('发布接口配置已保存');
   }, [publisherApiBase, publisherApiKey, publisherAutoSubmit, publisherEnabled, publisherTaskId]);
 
-  const handleSubmitPublisher = useCallback(async () => {
-    const payLink = job?.result?.url;
+  const handleSubmitPublisher = useCallback(async (targetJob: ExtractJobResponse) => {
+    const payLink = targetJob.result?.url;
     const taskId = publisherTaskId.trim();
     const apiKey = publisherApiKey.trim();
     if (!payLink || !taskId || !apiKey) return;
 
-    setPublisherStatus('submitting');
-    setPublisherMessage('');
+    setPublisherByJob((current) => ({
+      ...current,
+      [targetJob.job_id]: { status: 'submitting', message: '' },
+    }));
     try {
       setApiKey(apiKey);
       await submitPublisherCheckout({
         api_key: apiKey,
         api_base: publisherApiBase.trim() || PUBLISHER_UPSTREAM_DEFAULT,
         task_id: taskId,
-        access_token: accessToken.trim(),
+        access_token: jobAccessTokens[targetJob.job_id] || accessToken.trim(),
         pay_link: payLink,
       });
-      setPublisherStatus('success');
-      setPublisherMessage('支付长链已提交到发布任务');
+      setPublisherByJob((current) => ({
+        ...current,
+        [targetJob.job_id]: { status: 'success', message: '支付长链已提交到发布任务' },
+      }));
     } catch (e: unknown) {
-      setPublisherStatus('error');
-      setPublisherMessage(e instanceof Error ? e.message : '发布接口提交失败');
+      setPublisherByJob((current) => ({
+        ...current,
+        [targetJob.job_id]: {
+          status: 'error',
+          message: e instanceof Error ? e.message : '发布接口提交失败',
+        },
+      }));
     }
-  }, [accessToken, job?.result?.url, publisherApiBase, publisherApiKey, publisherTaskId]);
+  }, [accessToken, jobAccessTokens, publisherApiBase, publisherApiKey, publisherTaskId]);
 
   useEffect(() => {
-    if (
-      !publisherEnabled ||
-      !publisherAutoSubmit ||
-      !job?.job_id ||
-      job.status !== 'completed' ||
-      !job.result?.url ||
-      autoPublisherJobRef.current === job.job_id
-    ) {
-      return;
-    }
+    if (!publisherEnabled || !publisherAutoSubmit) return;
     if (!publisherTaskId.trim() || !publisherApiKey.trim()) return;
-    autoPublisherJobRef.current = job.job_id;
-    void handleSubmitPublisher();
+    jobs.forEach((item) => {
+      if (
+        item.status !== 'completed' ||
+        !item.result?.url ||
+        autoPublisherJobRef.current.has(item.job_id)
+      ) {
+        return;
+      }
+      autoPublisherJobRef.current.add(item.job_id);
+      void handleSubmitPublisher(item);
+    });
   }, [
     handleSubmitPublisher,
-    job?.job_id,
-    job?.result?.url,
-    job?.status,
+    jobs,
     publisherApiKey,
     publisherAutoSubmit,
     publisherEnabled,
     publisherTaskId,
   ]);
 
-  const canCancel = job?.status === 'pending' || job?.status === 'running';
-  const customProxyCount = buildProxySeedChains(customProxyTexts).length;
+  useEffect(() => {
+    jobs.forEach((item) => {
+      if (
+        item.status !== 'completed' ||
+        !item.result?.url ||
+        resultSoundJobRef.current.has(item.job_id)
+      ) {
+        return;
+      }
+      resultSoundJobRef.current.add(item.job_id);
+      playResultSound(resultAudioContextRef);
+    });
+  }, [jobs]);
+
+  const customProxyCount = buildProxySeedChains(customProxyTexts, paymentMethod).length;
+  const hasFinishedJobs = jobs.some(
+    (item) => item.status === 'completed' || item.status === 'failed' || item.status === 'cancelled',
+  );
+  const handleClearFinishedJobs = useCallback(() => {
+    const finishedIds = new Set(
+      jobs
+        .filter((item) => item.status === 'completed' || item.status === 'failed' || item.status === 'cancelled')
+        .map((item) => item.job_id),
+    );
+    clearFinished();
+    setPublisherByJob((current) =>
+      Object.fromEntries(Object.entries(current).filter(([jobId]) => !finishedIds.has(jobId))),
+    );
+    setJobAccessTokens((current) =>
+      Object.fromEntries(Object.entries(current).filter(([jobId]) => !finishedIds.has(jobId))),
+    );
+    finishedIds.forEach((jobId) => {
+      autoPublisherJobRef.current.delete(jobId);
+      resultSoundJobRef.current.delete(jobId);
+    });
+  }, [clearFinished, jobs]);
   const canSubmit =
     !!accessToken.trim() &&
-    !canCancel &&
     (proxySourceMode !== 'custom' || customProxyCount > 0);
   const canSubmitPublisher =
-    !!job?.result?.url &&
     !!publisherTaskId.trim() &&
-    !!publisherApiKey.trim() &&
-    publisherStatus !== 'submitting';
+    !!publisherApiKey.trim();
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">UPI 链接提取</h2>
-          <p className="text-sm text-gray-500">后端执行提取任务，前端实时显示 WebSocket 日志。</p>
+          <p className="text-sm text-gray-500">后端并发执行 UPI / iDEAL 提炼任务，前端实时显示每个任务的 WebSocket 日志。</p>
         </div>
-        {job && (
-          <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_COLORS[job.status] || STATUS_COLORS.pending}`}>
-            {STATUS_LABELS[job.status] || job.status}
+        {jobs.length > 0 && (
+          <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700">
+            运行中 {activeCount} / 总计 {jobs.length}
           </span>
         )}
       </div>
@@ -389,10 +713,23 @@ export function LinkExtract() {
 
           <div className="space-y-4">
             <div>
+              <label className="mb-1.5 block text-sm font-medium text-gray-700">提炼类型</label>
+              <select
+                value={paymentMethod}
+                onChange={(event) => handlePaymentMethodChange(event.target.value as PaymentMethod)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500"
+              >
+                <option value="upi">UPI（JP / IN）</option>
+                <option value="ideal">iDEAL（JP / NL）</option>
+              </select>
+            </div>
+
+            <div>
               <label className="mb-1.5 block text-sm font-medium text-gray-700">账单国家</label>
               <select
                 value={billingCountry}
                 onChange={(event) => setBillingCountry(event.target.value)}
+                disabled={paymentMethod === 'ideal'}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500"
               >
                 {COUNTRY_OPTIONS.map((country) => (
@@ -444,7 +781,7 @@ export function LinkExtract() {
                 {CUSTOM_PROXY_STAGES.map((stage) => (
                   <label key={stage} className="block">
                     <span className="mb-1 block text-xs font-medium text-gray-500">
-                      {CUSTOM_PROXY_STAGE_LABELS[stage]}
+                      {customProxyStageLabel(paymentMethod, stage)}
                     </span>
                     <textarea
                       value={customProxyTexts[stage]}
@@ -461,7 +798,7 @@ export function LinkExtract() {
                   </label>
                 ))}
                 <div className="text-xs text-gray-500">
-                  {customProxyCount > 0 ? `已组合 ${customProxyCount} 组两国代理链` : '请分别输入 IN 代理和 VN 代理；IN 会用于下单和支付确认'}
+                  {customProxyCount > 0 ? `已组合 ${customProxyCount} 组两国代理链` : customProxyEmptyText(paymentMethod)}
                 </div>
               </div>
             )}
@@ -476,11 +813,18 @@ export function LinkExtract() {
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500"
             >
               <option value="default">使用后端默认国家链路</option>
-              <option value="india">IN checkout / VN 优惠 / IN provider</option>
+              {paymentMethod === 'upi' && (
+                <option value="india">JP checkout / IN UPI provider</option>
+              )}
+              {paymentMethod === 'ideal' && (
+                <option value="ideal">JP checkout / NL iDEAL provider</option>
+              )}
               <option value="manual">手动选择国家</option>
             </select>
             <p className="text-xs text-gray-500">
-              同一条代理 seed 会按国家链路派生为下单、优惠和支付代理。
+              {paymentMethod === 'ideal'
+                ? 'iDEAL 默认使用 JP 代理创建 checkout，NL 代理完成 provider 与确认。'
+                : 'UPI 默认使用 JP 代理创建 checkout，IN 代理完成 Stripe/UPI/approve。'}
             </p>
 
             {proxyChainMode === 'manual' && (
@@ -614,27 +958,11 @@ export function LinkExtract() {
                 >
                   保存发布配置
                 </button>
-                <button
-                  type="button"
-                  onClick={handleSubmitPublisher}
-                  disabled={!canSubmitPublisher}
-                  className="rounded border border-purple-200 bg-white px-3 py-1.5 text-xs font-medium text-purple-700 hover:bg-purple-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-300"
-                >
-                  {publisherStatus === 'submitting' ? '提交中...' : '提交支付长链'}
-                </button>
               </div>
 
-              {publisherMessage && (
-                <div
-                  className={`lg:col-span-2 rounded px-3 py-2 text-xs ${
-                    publisherStatus === 'error'
-                      ? 'bg-red-50 text-red-700'
-                      : publisherStatus === 'success'
-                        ? 'bg-green-50 text-green-700'
-                        : 'bg-blue-50 text-blue-700'
-                  }`}
-                >
-                  {publisherMessage}
+              {publisherNotice && (
+                <div className="lg:col-span-2 rounded bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                  {publisherNotice}
                 </div>
               )}
             </div>
@@ -647,15 +975,15 @@ export function LinkExtract() {
             disabled={loading || !canSubmit}
             className="flex-1 rounded-lg bg-purple-600 py-2.5 text-sm font-medium text-white transition-colors hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-gray-300"
           >
-            {loading ? '提交中...' : canCancel ? '任务运行中' : '开始提取'}
+            {loading ? '提交中...' : activeCount > 0 ? '再开一个提取任务' : '开始提取'}
           </button>
-          {canCancel && (
+          {hasFinishedJobs && (
             <button
               type="button"
-              onClick={cancel}
-              className="rounded-lg border border-red-200 px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50"
+              onClick={handleClearFinishedJobs}
+              className="rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-500 hover:bg-gray-50"
             >
-              取消
+              清理已结束
             </button>
           )}
         </div>
@@ -663,92 +991,38 @@ export function LinkExtract() {
         {error && <p className="text-sm text-red-600">{error}</p>}
       </form>
 
-      {job && (
-        <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-5">
+      {jobs.length > 0 && (
+        <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-semibold text-gray-800">任务结果</h3>
-              <p className="font-mono text-xs text-gray-400">{job.job_id}</p>
-            </div>
-            {(job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') && (
-              <button
-                type="button"
-                onClick={reset}
-                className="rounded border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-50"
-              >
-                新任务
-              </button>
-            )}
+            <h3 className="text-sm font-semibold text-gray-800">任务队列</h3>
+            <span className="text-xs text-gray-500">后端并发上限由 UPISCAN_WORKERS 控制</span>
           </div>
-
-          {(job.status === 'pending' || job.status === 'running') && (
-            <div className="flex items-center gap-3 text-sm text-gray-500">
-              <div className="h-4 w-4 animate-spin rounded-full border-2 border-purple-500 border-t-transparent" />
-              正在提取 UPI 支付链接...
-            </div>
-          )}
-
-          {job.status === 'completed' && job.result?.url && (
-            <div className="grid gap-4 lg:grid-cols-[1fr_240px]">
-              <div className="rounded-lg bg-gray-50 p-4">
-                <label className="mb-2 block text-xs font-medium text-gray-500">支付链接</label>
-                <div className="flex gap-2">
-                  <code className="min-w-0 flex-1 break-all rounded border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700">
-                    {job.result.url}
-                  </code>
-                  <button
-                    type="button"
-                    onClick={handleCopyUrl}
-                    className="shrink-0 rounded border border-purple-200 px-3 py-2 text-xs font-medium text-purple-700 hover:bg-purple-50"
-                  >
-                    {copied ? '已复制' : '复制'}
-                  </button>
-                </div>
-              </div>
-              {qrDataUrl && (
-                <div className="flex justify-center rounded-lg border border-gray-200 bg-white p-3">
-                  <img src={qrDataUrl} alt="支付二维码" className="h-52 w-52" />
-                </div>
-              )}
-            </div>
-          )}
-
-          {job.status === 'failed' && (
-            <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
-              {job.error || '提取失败'}
-            </div>
-          )}
-
-          {job.logs.length > 0 && (
-            <div>
-              <button
-                type="button"
-                onClick={() => setLogsExpanded((value) => !value)}
-                className="text-xs text-gray-500 hover:text-gray-700"
-              >
-                {logsExpanded ? '隐藏日志' : '显示日志'} ({job.logs.length})
-              </button>
-              {logsExpanded && (
-                <div className="mt-2 max-h-80 space-y-1 overflow-y-auto rounded-lg bg-gray-950 p-3">
-                  {job.logs.map((log, index) => (
-                    <div
-                      key={`${log.timestamp}-${index}`}
-                      className={`font-mono text-xs ${
-                        log.level === 'error'
-                          ? 'text-red-300'
-                          : log.level === 'warn'
-                            ? 'text-yellow-300'
-                            : 'text-gray-300'
-                      }`}
-                    >
-                      <span className="text-gray-500">[{new Date(log.timestamp).toLocaleTimeString()}]</span>{' '}
-                      {log.message}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          {jobs.map((item) => (
+            <ExtractJobCard
+              key={item.job_id}
+              job={item}
+              publisherState={publisherByJob[item.job_id]}
+              publisherEnabled={publisherEnabled}
+              canSubmitPublisher={canSubmitPublisher}
+              onCancel={(jobId) => void cancel(jobId)}
+              onRemove={(jobId) => {
+                remove(jobId);
+                setPublisherByJob((current) => {
+                  const next = { ...current };
+                  delete next[jobId];
+                  return next;
+                });
+                setJobAccessTokens((current) => {
+                  const next = { ...current };
+                  delete next[jobId];
+                  return next;
+                });
+                autoPublisherJobRef.current.delete(jobId);
+                resultSoundJobRef.current.delete(jobId);
+              }}
+              onSubmitPublisher={(targetJob) => void handleSubmitPublisher(targetJob)}
+            />
+          ))}
         </div>
       )}
     </div>

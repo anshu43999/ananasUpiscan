@@ -26,8 +26,8 @@ from .proxy import set_proxy
 # ── constants ──────────────────────────────────────────────────────────────
 
 DEFAULT_USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6_1) "
-    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
 )
 
 CHATGPT_CLIENT_VERSION = "prod-db390ebea64862bf1899c420a4c736e0cf639747"

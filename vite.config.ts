@@ -9,9 +9,8 @@ export default defineConfig({
   server: {
     proxy: {
       '/api/publisher': {
-        target: 'https://foarge.com',
+        target: backendTarget,
         changeOrigin: true,
-        secure: false,
       },
       '/api/extract': {
         target: backendTarget,
