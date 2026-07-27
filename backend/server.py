@@ -2,22 +2,16 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from urllib.parse import urlsplit
 
-import requests
-from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .job_manager import JobManager
 from .models import (
-    ExtractConfig,
     ExtractJobCreate,
     ExtractJobCreated,
     ExtractJobSnapshot,
-    ExtractSettings,
-    PublisherSubmitCheckoutRequest,
-    PublisherSubmitCheckoutResult,
     ProxyChainTestResult,
 )
 from .ws_manager import WebSocketManager
@@ -26,10 +20,6 @@ from .ws_manager import WebSocketManager
 app = FastAPI(title="UPIScan Backend")
 ws_manager = WebSocketManager()
 job_manager = JobManager(ws_manager, max_workers=int(os.environ.get("UPISCAN_WORKERS", "2")))
-FOARGE_PUBLISHER_API_BASE = os.environ.get(
-    "FOARGE_PUBLISHER_API_BASE",
-    "https://foarge.com/api/publisher/v1",
-).rstrip("/")
 
 app.add_middleware(
     CORSMiddleware,
@@ -53,16 +43,6 @@ async def shutdown() -> None:
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
-
-
-@app.get("/api/config", response_model=ExtractConfig)
-async def get_config() -> ExtractConfig:
-    return ExtractConfig()
-
-
-@app.get("/api/settings", response_model=ExtractSettings)
-async def get_settings() -> ExtractSettings:
-    return ExtractSettings()
 
 
 @app.post("/api/extract/jobs", response_model=ExtractJobCreated)
@@ -90,98 +70,6 @@ async def cancel_extract_job(job_id: str) -> ExtractJobSnapshot:
 @app.post("/api/proxy-chain-test", response_model=ProxyChainTestResult)
 async def proxy_chain_test() -> ProxyChainTestResult:
     return ProxyChainTestResult(success=True, latency_ms=0)
-
-
-@app.post("/api/publisher/submit-checkout", response_model=PublisherSubmitCheckoutResult)
-async def submit_publisher_checkout(
-    request: PublisherSubmitCheckoutRequest,
-) -> PublisherSubmitCheckoutResult:
-    api_base = request.api_base.strip().rstrip("/") or "https://foarge.com/api/publisher/v1"
-    parsed = urlsplit(api_base)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise HTTPException(status_code=400, detail="invalid publisher api base")
-
-    url = f"{api_base}/tasks/{request.task_id.strip()}/submit-checkout"
-    payload = {
-        "checkout_data": {
-            "access_token": request.access_token,
-            "pay_link": request.pay_link,
-        }
-    }
-    try:
-        response = requests.post(
-            url,
-            json=payload,
-            headers={
-                "Authorization": f"Bearer {request.api_key.strip()}",
-                "Content-Type": "application/json",
-            },
-            timeout=20,
-        )
-    except requests.RequestException as exc:
-        raise HTTPException(status_code=502, detail=f"publisher request failed: {exc}") from exc
-
-    data = None
-    if response.headers.get("content-type", "").startswith("application/json"):
-        try:
-            data = response.json()
-        except ValueError:
-            data = None
-    message = None
-    if isinstance(data, dict):
-        message = str(data.get("message") or data.get("error") or "") or None
-    if response.status_code >= 400:
-        detail = message or response.text[:500] or f"publisher returned HTTP {response.status_code}"
-        raise HTTPException(status_code=response.status_code, detail=detail)
-
-    return PublisherSubmitCheckoutResult(
-        success=True,
-        status_code=response.status_code,
-        message=message,
-        data=data if isinstance(data, dict) else None,
-    )
-
-
-@app.api_route(
-    "/api/publisher-proxy/v1/{publisher_path:path}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-)
-async def publisher_proxy(publisher_path: str, request: Request) -> Response:
-    authorization = request.headers.get("authorization", "").strip()
-    if not authorization:
-        raise HTTPException(status_code=401, detail="missing publisher authorization")
-
-    target_url = f"{FOARGE_PUBLISHER_API_BASE}/{publisher_path.lstrip('/')}"
-    body = await request.body()
-    headers = {
-        "Authorization": authorization,
-        "Accept": request.headers.get("accept", "application/json"),
-    }
-    content_type = request.headers.get("content-type")
-    if content_type:
-        headers["Content-Type"] = content_type
-
-    try:
-        upstream = requests.request(
-            request.method,
-            target_url,
-            params=dict(request.query_params),
-            data=body if body else None,
-            headers=headers,
-            timeout=30,
-        )
-    except requests.RequestException as exc:
-        raise HTTPException(status_code=502, detail=f"publisher request failed: {exc}") from exc
-
-    response_headers = {}
-    upstream_content_type = upstream.headers.get("content-type")
-    if upstream_content_type:
-        response_headers["content-type"] = upstream_content_type
-    return Response(
-        content=upstream.content,
-        status_code=upstream.status_code,
-        headers=response_headers,
-    )
 
 
 @app.websocket("/api/extract/jobs/{job_id}/ws")

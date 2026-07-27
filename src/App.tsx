@@ -20,7 +20,7 @@ export default function App() {
           <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4">
             <div>
               <h1 className="text-lg font-bold text-gray-900">UPIScan</h1>
-              <p className="text-xs text-gray-500">UPI 链接提取</p>
+              <p className="text-xs text-gray-500">支付链接提取</p>
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <input

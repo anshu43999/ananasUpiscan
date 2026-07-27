@@ -103,13 +103,15 @@ export function useExtractJobs(): UseExtractJobsReturn {
   );
 
   useEffect(() => {
+    const pollingMap = pollingRefs.current;
+    const socketMap = socketRefs.current;
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      pollingRefs.current.forEach((timer) => clearInterval(timer));
-      pollingRefs.current.clear();
-      socketRefs.current.forEach((socket) => socket.close());
-      socketRefs.current.clear();
+      pollingMap.forEach((timer) => clearInterval(timer));
+      pollingMap.clear();
+      socketMap.forEach((socket) => socket.close());
+      socketMap.clear();
     };
   }, []);
 

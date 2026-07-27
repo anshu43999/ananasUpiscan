@@ -25,27 +25,6 @@ async function extractFetch<T>(
   return res.json() as Promise<T>;
 }
 
-export interface ExtractConfig {
-  cdk_enabled: boolean;
-  cost_per_task: number;
-  log_visible: boolean;
-}
-
-export function getExtractConfig(): Promise<ExtractConfig> {
-  return extractFetch('/api/config');
-}
-
-export interface ExtractSettings {
-  payment_methods?: string[];
-  languages?: string[];
-  billing_countries?: string[];
-  proxy_regions?: string[];
-}
-
-export function getExtractSettings(): Promise<ExtractSettings> {
-  return extractFetch('/api/settings');
-}
-
 export interface ExtractJobLog {
   timestamp: string;
   message: string;
@@ -86,14 +65,9 @@ export interface StartExtractOptions {
   access_token: string;
   session_token?: string;
   payment_method: string;
-  payment_page_mode: string;
-  language: string;
   billing_country: string;
-  proxy_chain?: Record<string, string>;
   proxy_seeds?: string[];
   proxy_seed_chains?: Array<Record<string, string>>;
-  custom_export_proxy?: string;
-  client_fingerprint?: string;
   capture_diagnostics?: boolean;
   config?: Record<string, unknown>;
 }
@@ -129,30 +103,6 @@ export function testProxyChain(
   return extractFetch('/api/proxy-chain-test', {
     method: 'POST',
     body: JSON.stringify(config),
-  });
-}
-
-export interface PublisherSubmitCheckoutOptions {
-  api_key: string;
-  api_base: string;
-  task_id: string;
-  access_token: string;
-  pay_link: string;
-}
-
-export interface PublisherSubmitCheckoutResult {
-  success: boolean;
-  status_code: number;
-  message?: string;
-  data?: Record<string, unknown>;
-}
-
-export function submitPublisherCheckout(
-  options: PublisherSubmitCheckoutOptions,
-): Promise<PublisherSubmitCheckoutResult> {
-  return extractFetch('/api/publisher/submit-checkout', {
-    method: 'POST',
-    body: JSON.stringify(options),
   });
 }
 
