@@ -150,7 +150,7 @@ class JobManager:
 
     def _result_from_logs(self, logs: list[ExtractJobLog]) -> ExtractJobResult | None:
         for log in reversed(logs):
-            match = re.search(r"(?:UPI|iDEAL|MoMo) final payment URL:\s*(https?://[^\s]+)", log.message)
+            match = re.search(r"(?:UPI|iDEAL|MoMo|Kakao) final payment URL:\s*(https?://[^\s]+)", log.message)
             if match:
                 return ExtractJobResult(url=match.group(1), status="ok")
         for log in reversed(logs):

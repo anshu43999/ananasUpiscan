@@ -9,6 +9,7 @@ from typing import Any
 from .extractor.context import ExtractionContext
 from .extractor.extract import config_from_env, load_token, run_single_link_mode
 from .extractor.ideal import run_ideal_single_link_mode
+from .extractor.kakao import run_kakao_single_link_mode
 from .extractor.vietnam import run_momo_single_link_mode
 
 
@@ -89,6 +90,25 @@ def run_extract_worker(job_id: str, payload: dict[str, Any], log_queue: Queue) -
             config["browser_timezone"] = os.environ.get("MOMO_BROWSER_TIMEZONE", "Asia/Ho_Chi_Minh").strip() or "Asia/Ho_Chi_Minh"
         if "promo_mode" not in request_config and "PP_PROMO_MODE" not in os.environ:
             config["promo_mode"] = "off"
+    elif payment_method == "kakao":
+        if "bootstrap_country" not in request_config:
+            config["bootstrap_country"] = os.environ.get("KAKAO_BOOTSTRAP_COUNTRY", "KR").strip() or "KR"
+        if "promotion_countries" not in request_config:
+            config["promotion_countries"] = [os.environ.get("KAKAO_PROMOTION_COUNTRY", "VN").strip() or "VN"]
+        if "provider_country" not in request_config:
+            config["provider_country"] = os.environ.get("KAKAO_PROVIDER_COUNTRY", "KR").strip() or "KR"
+        if "provider_country_label" not in request_config:
+            config["provider_country_label"] = str(config.get("provider_country") or "KR")
+        if "billing_country" not in request_config:
+            config["billing_country"] = str(config.get("provider_country") or "KR")
+        if "checkout_country" not in request_config:
+            config["checkout_country"] = str(config.get("bootstrap_country") or "KR")
+        if "browser_locale" not in request_config:
+            config["browser_locale"] = os.environ.get("KAKAO_BROWSER_LOCALE", "ko-KR").strip() or "ko-KR"
+        if "elements_locale" not in request_config:
+            config["elements_locale"] = os.environ.get("KAKAO_ELEMENTS_LOCALE", "ko").strip() or "ko"
+        if "browser_timezone" not in request_config:
+            config["browser_timezone"] = os.environ.get("KAKAO_BROWSER_TIMEZONE", "Asia/Seoul").strip() or "Asia/Seoul"
 
     ctx = QueueExtractionContext(config=config, log_queue=log_queue)
     try:
@@ -96,6 +116,8 @@ def run_extract_worker(job_id: str, payload: dict[str, Any], log_queue: Queue) -
         proxy_seeds = ctx.load_proxy_seeds()
         if payment_method == "ideal":
             exit_code = run_ideal_single_link_mode(ctx, access_token, session_token, proxy_seeds)
+        elif payment_method == "kakao":
+            exit_code = run_kakao_single_link_mode(ctx, access_token, session_token, proxy_seeds)
         elif payment_method == "momo":
             exit_code = run_momo_single_link_mode(ctx, access_token, session_token, proxy_seeds)
         elif payment_method == "upi":
