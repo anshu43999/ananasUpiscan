@@ -153,6 +153,16 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     "IDEAL_POSTAL_CODE": "",
     "IDEAL_STATE": "",
     "IDEAL_BILLING_COUNTRY": "",
+    "MOMO_CHECKOUT_COUNTRY": "",
+    "MOMO_CHECKOUT_PROXY_COUNTRY": "",
+    "MOMO_PROVIDER_PROXY_COUNTRY": "",
+    "MOMO_BROWSER_LOCALE": "",
+    "MOMO_ELEMENTS_LOCALE": "",
+    "MOMO_BROWSER_TIMEZONE": "",
+    "MOMO_CHECKOUT_RETRY_MAX": "",
+    "MOMO_MAX_RETRY": "",
+    "MOMO_WORKERS": "",
+    "MOMO_WORKERS_MAX": "",
 
     # Stripe / ChatGPT constants
     "stripe_pk": "",

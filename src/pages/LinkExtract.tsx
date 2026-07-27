@@ -40,7 +40,7 @@ const STORAGE_KEY_PUBLISHER = 'upiscan_publisher_handoff';
 const PUBLISHER_UPSTREAM_DEFAULT = 'https://foarge.com/api/publisher/v1';
 
 type ProxyStage = (typeof PROXY_STAGES)[number];
-type PaymentMethod = 'upi' | 'ideal';
+type PaymentMethod = 'upi' | 'ideal' | 'momo';
 type ProxySourceMode = 'builtin' | 'custom';
 type PublisherStatus = 'idle' | 'submitting' | 'success' | 'error';
 type AudioContextRef = MutableRefObject<AudioContext | null>;
@@ -92,9 +92,15 @@ function buildProxyChain(
   if (mode === 'ideal') {
     return { checkout: 'JP', promotion: 'NL', provider: 'NL', approve: 'NL' };
   }
+  if (mode === 'momo') {
+    return { checkout: 'VN', promotion: 'VN', provider: 'VN', approve: 'VN' };
+  }
   if (mode === 'manual') return { ...manualRegions };
   if (paymentMethod === 'ideal') {
     return { checkout: 'JP', promotion: 'NL', provider: 'NL', approve: 'NL' };
+  }
+  if (paymentMethod === 'momo') {
+    return { checkout: 'VN', promotion: 'VN', provider: 'VN', approve: 'VN' };
   }
   return undefined;
 }
@@ -114,11 +120,21 @@ function configFromProxyChain(
     config.elements_locale = 'nl';
     config.browser_timezone = 'Europe/Amsterdam';
   }
+  if (paymentMethod === 'momo') {
+    config.checkout_country = 'VN';
+    config.billing_country = 'VN';
+    config.provider_country = chain?.provider || 'VN';
+    config.provider_country_label = chain?.provider || 'VN';
+    config.browser_locale = 'vi-VN';
+    config.elements_locale = 'vi';
+    config.browser_timezone = 'Asia/Ho_Chi_Minh';
+    config.promo_mode = 'off';
+  }
   if (chain?.checkout) config.bootstrap_country = chain.checkout;
   if (chain?.promotion) config.promotion_countries = [chain.promotion];
   if (chain?.provider) {
     config.provider_country = chain.provider;
-    if (paymentMethod !== 'ideal') config.billing_country = chain.provider;
+    if (paymentMethod === 'upi') config.billing_country = chain.provider;
   }
   if (customExportProxy.trim()) config.pre_proxy = customExportProxy.trim();
   return Object.keys(config).length ? config : undefined;
@@ -133,7 +149,6 @@ function parseProxySeeds(value: string): string[] {
 
 function buildProxySeedChains(
   proxyTexts: Record<ProxyStage, string>,
-  paymentMethod: PaymentMethod,
 ): Array<Record<string, string>> {
   const checkout = parseProxySeeds(proxyTexts.checkout);
   const promotion = parseProxySeeds(proxyTexts.promotion);
@@ -143,9 +158,7 @@ function buildProxySeedChains(
   return Array.from({ length: total }, (_, index) => {
     const firstProxy = checkout[index % checkout.length];
     const secondProxy = promotion[index % promotion.length];
-    return paymentMethod === 'ideal'
-      ? { checkout: firstProxy, promotion: secondProxy, provider: secondProxy }
-      : { checkout: firstProxy, promotion: secondProxy, provider: secondProxy };
+    return { checkout: firstProxy, promotion: secondProxy, provider: secondProxy };
   });
 }
 
@@ -155,21 +168,40 @@ function customProxyStageLabel(paymentMethod: PaymentMethod, stage: (typeof CUST
       ? 'JP 代理（前段 / 创建 checkout）'
       : 'NL 代理（iDEAL provider）';
   }
+  if (paymentMethod === 'momo') {
+    return stage === 'checkout'
+      ? 'VN 代理（创建 checkout）'
+      : 'VN 代理（Stripe init / MoMo 检测）';
+  }
   return stage === 'checkout'
     ? 'JP 代理（创建 checkout）'
     : 'IN 代理（UPI provider / approve）';
 }
 
 function customProxyEmptyText(paymentMethod: PaymentMethod): string {
-  return paymentMethod === 'ideal'
-    ? '请分别输入 JP 代理和 NL 代理；NL 会用于 iDEAL provider'
-    : '请分别输入 JP 代理和 IN 代理；JP 创建 checkout，IN 用于 UPI provider / approve';
+  if (paymentMethod === 'ideal') {
+    return '请分别输入 JP 代理和 NL 代理；NL 会用于 iDEAL provider';
+  }
+  if (paymentMethod === 'momo') {
+    return '请分别输入两组 VN 代理；第一组创建 checkout，第二组做 Stripe init 与 MoMo 检测';
+  }
+  return '请分别输入 JP 代理和 IN 代理；JP 创建 checkout，IN 用于 UPI provider / approve';
 }
 
 function defaultManualRegions(paymentMethod: PaymentMethod): Record<ProxyStage, string> {
-  return paymentMethod === 'ideal'
-    ? { checkout: 'JP', promotion: 'NL', provider: 'NL', approve: 'NL' }
-    : { checkout: 'JP', promotion: 'IN', provider: 'IN', approve: 'IN' };
+  if (paymentMethod === 'ideal') {
+    return { checkout: 'JP', promotion: 'NL', provider: 'NL', approve: 'NL' };
+  }
+  if (paymentMethod === 'momo') {
+    return { checkout: 'VN', promotion: 'VN', provider: 'VN', approve: 'VN' };
+  }
+  return { checkout: 'JP', promotion: 'IN', provider: 'IN', approve: 'IN' };
+}
+
+function defaultBillingCountry(paymentMethod: PaymentMethod): string {
+  if (paymentMethod === 'ideal') return 'NL';
+  if (paymentMethod === 'momo') return 'VN';
+  return 'IN';
 }
 
 function getNotificationAudioContext(ref: AudioContextRef): AudioContext | null {
@@ -456,7 +488,7 @@ export function LinkExtract() {
     if (!saved) return;
     if (saved.paymentMethod) {
       setPaymentMethod(saved.paymentMethod);
-      setBillingCountry(saved.paymentMethod === 'ideal' ? 'NL' : 'IN');
+      setBillingCountry(defaultBillingCountry(saved.paymentMethod));
     }
     setProxySourceMode(saved.proxySourceMode || 'builtin');
     setProxyChainMode(saved.proxyChainMode);
@@ -484,7 +516,7 @@ export function LinkExtract() {
 
   const handlePaymentMethodChange = useCallback((value: PaymentMethod) => {
     setPaymentMethod(value);
-    setBillingCountry(value === 'ideal' ? 'NL' : 'IN');
+    setBillingCountry(defaultBillingCountry(value));
     setManualRegions(defaultManualRegions(value));
     setProxyChainMode((current) => {
       if (current === 'manual') return current;
@@ -499,7 +531,7 @@ export function LinkExtract() {
       const token = accessToken.trim();
       if (!token) return;
       primeResultSound(resultAudioContextRef);
-      const proxySeedChains = proxySourceMode === 'custom' ? buildProxySeedChains(customProxyTexts, paymentMethod) : [];
+      const proxySeedChains = proxySourceMode === 'custom' ? buildProxySeedChains(customProxyTexts) : [];
       if (proxySourceMode === 'custom' && proxySeedChains.length === 0) return;
 
       const options: StartExtractOptions = {
@@ -508,7 +540,9 @@ export function LinkExtract() {
         payment_method: paymentMethod,
         payment_page_mode: 'custom',
         language: 'auto',
-        billing_country: paymentMethod === 'ideal' ? 'NL' : proxyChain?.provider || billingCountry,
+        billing_country: paymentMethod === 'ideal' || paymentMethod === 'momo'
+          ? defaultBillingCountry(paymentMethod)
+          : proxyChain?.provider || billingCountry,
         proxy_chain: proxyChain,
         proxy_seed_chains: proxySeedChains.length ? proxySeedChains : undefined,
         custom_export_proxy: customExportProxy.trim() || undefined,
@@ -654,7 +688,7 @@ export function LinkExtract() {
     });
   }, [jobs]);
 
-  const customProxyCount = buildProxySeedChains(customProxyTexts, paymentMethod).length;
+  const customProxyCount = buildProxySeedChains(customProxyTexts).length;
   const hasFinishedJobs = jobs.some(
     (item) => item.status === 'completed' || item.status === 'failed' || item.status === 'cancelled',
   );
@@ -687,8 +721,8 @@ export function LinkExtract() {
     <div className="mx-auto max-w-5xl space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">UPI 链接提取</h2>
-          <p className="text-sm text-gray-500">后端并发执行 UPI / iDEAL 提炼任务，前端实时显示每个任务的 WebSocket 日志。</p>
+          <h2 className="text-lg font-semibold text-gray-900">支付链接提取</h2>
+          <p className="text-sm text-gray-500">后端并发执行 UPI / iDEAL / MoMo 提炼任务，前端实时显示每个任务的 WebSocket 日志。</p>
         </div>
         {jobs.length > 0 && (
           <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700">
@@ -721,6 +755,7 @@ export function LinkExtract() {
               >
                 <option value="upi">UPI（JP / IN）</option>
                 <option value="ideal">iDEAL（JP / NL）</option>
+                <option value="momo">MoMo（VN / VND）</option>
               </select>
             </div>
 
@@ -729,7 +764,7 @@ export function LinkExtract() {
               <select
                 value={billingCountry}
                 onChange={(event) => setBillingCountry(event.target.value)}
-                disabled={paymentMethod === 'ideal'}
+                disabled={paymentMethod === 'ideal' || paymentMethod === 'momo'}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500"
               >
                 {COUNTRY_OPTIONS.map((country) => (
@@ -798,7 +833,7 @@ export function LinkExtract() {
                   </label>
                 ))}
                 <div className="text-xs text-gray-500">
-                  {customProxyCount > 0 ? `已组合 ${customProxyCount} 组两国代理链` : customProxyEmptyText(paymentMethod)}
+                  {customProxyCount > 0 ? `已组合 ${customProxyCount} 组两段代理链` : customProxyEmptyText(paymentMethod)}
                 </div>
               </div>
             )}
@@ -819,12 +854,17 @@ export function LinkExtract() {
               {paymentMethod === 'ideal' && (
                 <option value="ideal">JP checkout / NL iDEAL provider</option>
               )}
+              {paymentMethod === 'momo' && (
+                <option value="momo">VN checkout / VN Stripe init</option>
+              )}
               <option value="manual">手动选择国家</option>
             </select>
             <p className="text-xs text-gray-500">
               {paymentMethod === 'ideal'
                 ? 'iDEAL 默认使用 JP 代理创建 checkout，NL 代理完成 provider 与确认。'
-                : 'UPI 默认使用 JP 代理创建 checkout，IN 代理完成 Stripe/UPI/approve。'}
+                : paymentMethod === 'momo'
+                  ? 'MoMo 默认使用 VN/VND checkout，通过 Stripe init 的 payment_method_types 判断是否包含 momo。'
+                  : 'UPI 默认使用 JP 代理创建 checkout，IN 代理完成 Stripe/UPI/approve。'}
             </p>
 
             {proxyChainMode === 'manual' && (

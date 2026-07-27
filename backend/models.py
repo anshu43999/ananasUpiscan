@@ -35,7 +35,7 @@ class ExtractJobResult(BaseModel):
 class ExtractJobCreate(BaseModel):
     access_token: str = Field(min_length=1)
     session_token: str | None = None
-    payment_method: Literal["upi", "ideal"] = "upi"
+    payment_method: Literal["upi", "ideal", "momo"] = "upi"
     payment_page_mode: str = "custom"
     language: str = "auto"
     billing_country: str = "IN"
@@ -70,7 +70,7 @@ class ExtractJobSnapshot(BaseModel):
 
 
 class ExtractSettings(BaseModel):
-    payment_methods: list[str] = Field(default_factory=lambda: ["upi", "ideal"])
+    payment_methods: list[str] = Field(default_factory=lambda: ["upi", "ideal", "momo"])
     languages: list[str] = Field(default_factory=lambda: ["auto", "en", "zh"])
     billing_countries: list[str] = Field(default_factory=lambda: ["IN", "US", "VN", "NL"])
     proxy_regions: list[str] = Field(default_factory=lambda: ["IN", "US", "VN", "NL", "BR", "JP"])

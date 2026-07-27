@@ -9,6 +9,7 @@ from typing import Any
 from .extractor.context import ExtractionContext
 from .extractor.extract import config_from_env, load_token, run_single_link_mode
 from .extractor.ideal import run_ideal_single_link_mode
+from .extractor.vietnam import run_momo_single_link_mode
 
 
 class QueueExtractionContext(ExtractionContext):
@@ -67,6 +68,27 @@ def run_extract_worker(job_id: str, payload: dict[str, Any], log_queue: Queue) -
             config["browser_timezone"] = os.environ.get("IDEAL_BROWSER_TIMEZONE", "Europe/Amsterdam").strip() or "Europe/Amsterdam"
         if "ideal_max_minor_amount" not in request_config and "IDEAL_MAX_MINOR_AMOUNT" not in os.environ:
             config["ideal_max_minor_amount"] = 50
+    elif payment_method == "momo":
+        if "bootstrap_country" not in request_config:
+            config["bootstrap_country"] = "VN"
+        if "promotion_countries" not in request_config:
+            config["promotion_countries"] = ["VN"]
+        if "provider_country" not in request_config:
+            config["provider_country"] = "VN"
+        if "provider_country_label" not in request_config:
+            config["provider_country_label"] = "VN"
+        if "billing_country" not in request_config:
+            config["billing_country"] = "VN"
+        if "checkout_country" not in request_config:
+            config["checkout_country"] = os.environ.get("MOMO_CHECKOUT_COUNTRY", "VN").strip() or "VN"
+        if "browser_locale" not in request_config:
+            config["browser_locale"] = os.environ.get("MOMO_BROWSER_LOCALE", "vi-VN").strip() or "vi-VN"
+        if "elements_locale" not in request_config:
+            config["elements_locale"] = os.environ.get("MOMO_ELEMENTS_LOCALE", "vi").strip() or "vi"
+        if "browser_timezone" not in request_config:
+            config["browser_timezone"] = os.environ.get("MOMO_BROWSER_TIMEZONE", "Asia/Ho_Chi_Minh").strip() or "Asia/Ho_Chi_Minh"
+        if "promo_mode" not in request_config and "PP_PROMO_MODE" not in os.environ:
+            config["promo_mode"] = "off"
 
     ctx = QueueExtractionContext(config=config, log_queue=log_queue)
     try:
@@ -74,6 +96,8 @@ def run_extract_worker(job_id: str, payload: dict[str, Any], log_queue: Queue) -
         proxy_seeds = ctx.load_proxy_seeds()
         if payment_method == "ideal":
             exit_code = run_ideal_single_link_mode(ctx, access_token, session_token, proxy_seeds)
+        elif payment_method == "momo":
+            exit_code = run_momo_single_link_mode(ctx, access_token, session_token, proxy_seeds)
         elif payment_method == "upi":
             exit_code = run_single_link_mode(ctx, access_token, session_token, proxy_seeds)
         else:
