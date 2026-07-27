@@ -2,8 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObjec
 import QRCode from 'qrcode';
 import { useExtractJobs } from '../hooks/useExtractJob';
 import {
+  checkProxies,
   testProxyChain,
   type ExtractJobResponse,
+  type ProxyCheckItem,
+  type ProxyCheckResponse,
   type ProxyChainTestResult,
   type StartExtractOptions,
 } from '../api/extract';
@@ -54,13 +57,14 @@ interface PaymentMethodOption {
   value: PaymentMethod;
   label: string;
   route: string;
+  result: string;
 }
 
 const PAYMENT_METHODS: PaymentMethodOption[] = [
-  { value: 'upi', label: 'UPI', route: 'JP / IN' },
-  { value: 'ideal', label: 'iDEAL', route: 'JP / NL' },
-  { value: 'momo', label: 'MoMo', route: 'VN / VND' },
-  { value: 'kakao', label: 'Kakao', route: 'KR / VN / KR' },
+  { value: 'upi', label: 'UPI', route: 'JP / IN', result: '二维码 / 长链' },
+  { value: 'ideal', label: 'iDEAL', route: 'JP / NL', result: '支付长链' },
+  { value: 'momo', label: 'MoMo', route: 'VN / VND', result: '支付长链' },
+  { value: 'kakao', label: 'Kakao', route: 'KR / VN / KR', result: '支付长链' },
 ];
 
 function loadProxyState(): SavedProxyState | null {
@@ -140,6 +144,17 @@ function parseProxySeeds(value: string): string[] {
     .split(/\r?\n|,/)
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith('#'));
+}
+
+function parseAccessTokenInputs(value: string): string[] {
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) return [trimmed];
+  return trimmed
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 10);
 }
 
 function buildProxySeedChains(
@@ -419,6 +434,13 @@ export function LinkExtract() {
   const [customExportProxy, setCustomExportProxy] = useState('');
   const [testResult, setTestResult] = useState<ProxyChainTestResult | null>(null);
   const [testLoading, setTestLoading] = useState(false);
+  const [proxyCheckInput, setProxyCheckInput] = useState('');
+  const [proxyCheckProtocol, setProxyCheckProtocol] = useState<'http' | 'socks5' | 'socks5h'>('http');
+  const [proxyCheckConcurrency, setProxyCheckConcurrency] = useState(20);
+  const [proxyCheckTimeoutMs, setProxyCheckTimeoutMs] = useState(10000);
+  const [proxyCheckLoading, setProxyCheckLoading] = useState(false);
+  const [proxyCheckResult, setProxyCheckResult] = useState<ProxyCheckResponse | null>(null);
+  const [proxyCheckError, setProxyCheckError] = useState<string | null>(null);
 
   const proxyChain = useMemo(
     () => buildProxyChain(proxyChainMode, manualRegions, paymentMethod),
@@ -455,8 +477,21 @@ export function LinkExtract() {
   }, []);
 
   const customProxyCount = buildProxySeedChains(customProxyTexts, paymentMethod).length;
-  const canSubmit = !!accessToken.trim() && (proxySourceMode !== 'custom' || customProxyCount > 0);
+  const accessTokenItems = useMemo(() => parseAccessTokenInputs(accessToken), [accessToken]);
+  const rawAccessTokenInputCount = accessToken
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean).length;
+  const accessTokenLineCount = accessTokenItems.length;
+  const accessTokenTooMany = rawAccessTokenInputCount > 10 && !accessToken.trim().startsWith('{') && !accessToken.trim().startsWith('[');
+  const canSubmit = accessTokenLineCount > 0 && !accessTokenTooMany && (proxySourceMode !== 'custom' || customProxyCount > 0);
   const fixedBillingCountry = paymentMethod === 'ideal' || paymentMethod === 'momo' || paymentMethod === 'kakao';
+  const activePaymentMethod = PAYMENT_METHODS.find((item) => item.value === paymentMethod) || PAYMENT_METHODS[0];
+  const goodProxyItems = useMemo(
+    () => (proxyCheckResult?.items || []).filter((item) => item.ok && item.raw),
+    [proxyCheckResult],
+  );
   const hasFinishedJobs = jobs.some(
     (item) => item.status === 'completed' || item.status === 'failed' || item.status === 'cancelled',
   );
@@ -464,26 +499,28 @@ export function LinkExtract() {
   const handleSubmit = useCallback(
     async (event: React.FormEvent) => {
       event.preventDefault();
-      const token = accessToken.trim();
-      if (!token) return;
+      if (!accessTokenItems.length || accessTokenTooMany) return;
       primeResultSound(resultAudioContextRef);
       const proxySeedChains = proxySourceMode === 'custom' ? buildProxySeedChains(customProxyTexts, paymentMethod) : [];
       if (proxySourceMode === 'custom' && proxySeedChains.length === 0) return;
 
-      const options: StartExtractOptions = {
-        access_token: token,
-        session_token: sessionToken.trim() || undefined,
-        payment_method: paymentMethod,
-        billing_country: fixedBillingCountry ? defaultBillingCountry(paymentMethod) : proxyChain?.provider || billingCountry,
-        proxy_seed_chains: proxySeedChains.length ? proxySeedChains : undefined,
-        capture_diagnostics: captureDiagnostics,
-        config: configFromProxyChain(proxyChain, customExportProxy, paymentMethod),
-      };
+      for (const token of accessTokenItems) {
+        const options: StartExtractOptions = {
+          access_token: token,
+          session_token: sessionToken.trim() || undefined,
+          payment_method: paymentMethod,
+          billing_country: fixedBillingCountry ? defaultBillingCountry(paymentMethod) : proxyChain?.provider || billingCountry,
+          proxy_seed_chains: proxySeedChains.length ? proxySeedChains : undefined,
+          capture_diagnostics: captureDiagnostics,
+          config: configFromProxyChain(proxyChain, customExportProxy, paymentMethod),
+        };
 
-      await submit(options);
+        await submit(options);
+      }
     },
     [
-      accessToken,
+      accessTokenItems,
+      accessTokenTooMany,
       billingCountry,
       captureDiagnostics,
       customExportProxy,
@@ -533,6 +570,46 @@ export function LinkExtract() {
     }
   }, [proxyChain]);
 
+  const handleProxyCheck = useCallback(async () => {
+    const proxies = proxyCheckInput.trim();
+    if (!proxies) {
+      setProxyCheckError('请先粘贴代理。');
+      return;
+    }
+    setProxyCheckLoading(true);
+    setProxyCheckError(null);
+    setProxyCheckResult(null);
+    try {
+      const result = await checkProxies({
+        proxies,
+        protocol: proxyCheckProtocol,
+        concurrency: proxyCheckConcurrency,
+        timeout_ms: proxyCheckTimeoutMs,
+      });
+      setProxyCheckResult(result);
+    } catch (e: unknown) {
+      setProxyCheckError(e instanceof Error ? e.message : '代理检测失败');
+    } finally {
+      setProxyCheckLoading(false);
+    }
+  }, [proxyCheckConcurrency, proxyCheckInput, proxyCheckProtocol, proxyCheckTimeoutMs]);
+
+  const fillCheckedProxies = useCallback((stage: (typeof CUSTOM_PROXY_STAGES)[number]) => {
+    const text = goodProxyItems.map((item) => item.raw).join('\n');
+    if (!text) return;
+    setProxySourceMode('custom');
+    setCustomProxyTexts((current) => ({
+      ...current,
+      [stage]: text,
+    }));
+  }, [goodProxyItems]);
+
+  const copyCheckedProxies = useCallback(async () => {
+    const text = goodProxyItems.map((item) => item.raw).join('\n');
+    if (!text) return;
+    await navigator.clipboard.writeText(text);
+  }, [goodProxyItems]);
+
   useEffect(() => {
     jobs.forEach((item) => {
       if (item.status !== 'completed' || !item.result?.url || resultSoundJobRef.current.has(item.job_id)) return;
@@ -568,7 +645,7 @@ export function LinkExtract() {
           )}
         </div>
 
-        <div className="mt-5 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-5 flex gap-1 overflow-x-auto rounded-lg border border-gray-200 bg-gray-50 p-1">
           {PAYMENT_METHODS.map((item) => {
             const active = paymentMethod === item.value;
             return (
@@ -576,17 +653,23 @@ export function LinkExtract() {
                 key={item.value}
                 type="button"
                 onClick={() => handlePaymentMethodChange(item.value)}
-                className={`h-20 rounded-lg border px-4 text-left transition-colors ${
+                className={`min-w-32 rounded-md px-4 py-2 text-left transition-colors ${
                   active
-                    ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
-                    : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-gray-600 hover:bg-white hover:text-gray-900'
                 }`}
               >
                 <span className="block text-sm font-semibold">{item.label}</span>
-                <span className="mt-1 block text-xs text-gray-500">{item.route}</span>
+                <span className={`mt-1 block text-xs ${active ? 'text-emerald-50' : 'text-gray-500'}`}>
+                  {item.result}
+                </span>
               </button>
             );
           })}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+          <span className="rounded-full bg-gray-100 px-2.5 py-1 text-gray-700">{activePaymentMethod.route}</span>
+          <span>{routeText(paymentMethod)}</span>
         </div>
       </section>
 
@@ -598,11 +681,19 @@ export function LinkExtract() {
               <textarea
                 value={accessToken}
                 onChange={(event) => setAccessToken(event.target.value)}
-                rows={4}
+                rows={6}
                 required
-                placeholder="粘贴 access_token，或包含 accessToken 的导出 JSON"
+                placeholder="允许多个 Access Token，一行一个；包含 accessToken 的导出 JSON 也可以直接粘贴"
                 className="w-full resize-y rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
               />
+              <div className="mt-1.5 flex items-center justify-between text-xs">
+                <span className={accessTokenTooMany ? 'text-rose-600' : 'text-gray-500'}>
+                  {accessTokenTooMany ? '每次最多提交 10 个 Access Token' : '最多 10 个 Access Token，一行一个'}
+                </span>
+                <span className={accessTokenTooMany ? 'font-semibold text-rose-600' : 'text-gray-500'}>
+                  {rawAccessTokenInputCount}/10
+                </span>
+              </div>
             </label>
 
             <div className="space-y-4">
@@ -643,7 +734,7 @@ export function LinkExtract() {
             />
           </label>
 
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid gap-4">
             <section className="space-y-3">
               <label className="block">
                 <span className="mb-1.5 block text-sm font-medium text-gray-700">代理来源</span>
@@ -687,104 +778,232 @@ export function LinkExtract() {
                 </div>
               )}
             </section>
-
-            <section className="space-y-3">
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-gray-700">国家链路</span>
-                <select
-                  value={proxyChainMode}
-                  onChange={(event) => {
-                    setProxyChainMode(event.target.value);
-                    setTestResult(null);
-                  }}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
-                >
-                  <option value="default">后端默认链路</option>
-                  {paymentMethod === 'upi' && <option value="india">JP checkout / IN UPI provider</option>}
-                  {paymentMethod === 'ideal' && <option value="ideal">JP checkout / NL iDEAL provider</option>}
-                  {paymentMethod === 'momo' && <option value="momo">VN checkout / VN Stripe init</option>}
-                  {paymentMethod === 'kakao' && <option value="kakao">KR checkout / VN update / KR Kakao</option>}
-                  <option value="manual">手动选择国家</option>
-                </select>
-              </label>
-
-              <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                {routeText(paymentMethod)}
-              </div>
-
-              {proxyChainMode === 'manual' && (
-                <div className="grid grid-cols-2 gap-2">
-                  {PROXY_STAGES.map((stage) => (
-                    <label key={stage} className="text-xs text-gray-500">
-                      <span className="mb-1 block">{PROXY_STAGE_LABELS[stage]}</span>
-                      <select
-                        value={manualRegions[stage]}
-                        onChange={(event) =>
-                          setManualRegions((current) => ({
-                            ...current,
-                            [stage]: event.target.value,
-                          }))
-                        }
-                        className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
-                      >
-                        {COUNTRY_OPTIONS.map((country) => (
-                          <option key={country} value={country}>{country}</option>
-                        ))}
-                      </select>
-                    </label>
-                  ))}
-                </div>
-              )}
-            </section>
           </div>
         </section>
 
         <aside className="space-y-5">
           <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="space-y-4">
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-gray-700">前置代理</span>
-                <input
-                  value={customExportProxy}
-                  onChange={(event) => setCustomExportProxy(event.target.value)}
-                  placeholder="socks5://127.0.0.1:7890"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
-                />
-              </label>
+            <details className="group">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-gray-800">
+                高级设置
+                <span className="text-xs font-medium text-gray-400 group-open:hidden">展开</span>
+                <span className="hidden text-xs font-medium text-gray-400 group-open:inline">收起</span>
+              </summary>
 
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={handleTestProxy}
-                  disabled={testLoading || !proxyChain}
-                  className="rounded-md border border-emerald-200 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-300"
-                >
-                  {testLoading ? '测试中...' : '测试链路'}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveProxy}
-                  className="rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
-                >
-                  保存代理
-                </button>
-                <button
-                  type="button"
-                  onClick={handleClearProxy}
-                  className="rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-400 hover:bg-gray-50"
-                >
-                  清除保存
-                </button>
-              </div>
+              <div className="mt-4 space-y-4">
+                <label className="block">
+                  <span className="mb-1.5 block text-sm font-medium text-gray-700">国家链路</span>
+                  <select
+                    value={proxyChainMode}
+                    onChange={(event) => {
+                      setProxyChainMode(event.target.value);
+                      setTestResult(null);
+                    }}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="default">后端默认链路</option>
+                    {paymentMethod === 'upi' && <option value="india">JP checkout / IN UPI provider</option>}
+                    {paymentMethod === 'ideal' && <option value="ideal">JP checkout / NL iDEAL provider</option>}
+                    {paymentMethod === 'momo' && <option value="momo">VN checkout / VN Stripe init</option>}
+                    {paymentMethod === 'kakao' && <option value="kakao">KR checkout / VN update / KR Kakao</option>}
+                    <option value="manual">手动选择国家</option>
+                  </select>
+                </label>
 
-              {testResult && (
-                <div className={`rounded-md px-3 py-2 text-xs ${testResult.success ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
-                  {testResult.success
-                    ? `代理链路可用（${testResult.latency_ms ?? 0} ms）`
-                    : testResult.error || '代理测试失败'}
+                <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                  {routeText(paymentMethod)}
                 </div>
-              )}
-            </div>
+
+                {proxyChainMode === 'manual' && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {PROXY_STAGES.map((stage) => (
+                      <label key={stage} className="text-xs text-gray-500">
+                        <span className="mb-1 block">{PROXY_STAGE_LABELS[stage]}</span>
+                        <select
+                          value={manualRegions[stage]}
+                          onChange={(event) =>
+                            setManualRegions((current) => ({
+                              ...current,
+                              [stage]: event.target.value,
+                            }))
+                          }
+                          className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
+                        >
+                          {COUNTRY_OPTIONS.map((country) => (
+                            <option key={country} value={country}>{country}</option>
+                          ))}
+                        </select>
+                      </label>
+                    ))}
+                  </div>
+                )}
+
+                <label className="block">
+                  <span className="mb-1.5 block text-sm font-medium text-gray-700">前置代理</span>
+                  <input
+                    value={customExportProxy}
+                    onChange={(event) => setCustomExportProxy(event.target.value)}
+                    placeholder="socks5://127.0.0.1:7890"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
+                  />
+                </label>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleTestProxy}
+                    disabled={testLoading || !proxyChain}
+                    className="rounded-md border border-emerald-200 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-300"
+                  >
+                    {testLoading ? '测试中...' : '测试链路'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveProxy}
+                    className="rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                  >
+                    保存代理
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClearProxy}
+                    className="rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-400 hover:bg-gray-50"
+                  >
+                    清除保存
+                  </button>
+                </div>
+
+                {testResult && (
+                  <div className={`rounded-md px-3 py-2 text-xs ${testResult.success ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                    {testResult.success
+                      ? `代理链路可用（${testResult.latency_ms ?? 0} ms）`
+                      : testResult.error || '代理测试失败'}
+                  </div>
+                )}
+
+                <div className="border-t border-gray-100 pt-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <span className="text-sm font-semibold text-gray-800">批量代理检测</span>
+                    {proxyCheckResult && (
+                      <span className="text-xs font-medium text-emerald-700">
+                        连通 {proxyCheckResult.ok} / {proxyCheckResult.total}
+                      </span>
+                    )}
+                  </div>
+
+                  <textarea
+                    value={proxyCheckInput}
+                    onChange={(event) => setProxyCheckInput(event.target.value)}
+                    rows={5}
+                    placeholder={'粘贴代理，一行一个\nHOST:PORT:USER:PASS\nUSER:PASS:HOST:PORT'}
+                    className="w-full resize-y rounded-lg border border-gray-300 px-3 py-2 font-mono text-xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
+                  />
+
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    <label className="text-xs text-gray-500">
+                      <span className="mb-1 block">协议</span>
+                      <select
+                        value={proxyCheckProtocol}
+                        onChange={(event) => setProxyCheckProtocol(event.target.value as 'http' | 'socks5' | 'socks5h')}
+                        className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
+                      >
+                        <option value="http">HTTP</option>
+                        <option value="socks5">SOCKS5</option>
+                        <option value="socks5h">SOCKS5H</option>
+                      </select>
+                    </label>
+                    <label className="text-xs text-gray-500">
+                      <span className="mb-1 block">并发</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={proxyCheckConcurrency}
+                        onChange={(event) => setProxyCheckConcurrency(Number(event.target.value) || 1)}
+                        className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </label>
+                    <label className="text-xs text-gray-500">
+                      <span className="mb-1 block">超时 ms</span>
+                      <input
+                        type="number"
+                        min={1000}
+                        max={60000}
+                        step={1000}
+                        value={proxyCheckTimeoutMs}
+                        onChange={(event) => setProxyCheckTimeoutMs(Number(event.target.value) || 10000)}
+                        className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleProxyCheck()}
+                      disabled={proxyCheckLoading || !proxyCheckInput.trim()}
+                      className="rounded-md border border-emerald-200 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-300"
+                    >
+                      {proxyCheckLoading ? '检测中...' : '开始检测'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void copyCheckedProxies()}
+                      disabled={!goodProxyItems.length}
+                      className="rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300"
+                    >
+                      复制连通代理
+                    </button>
+                    {CUSTOM_PROXY_STAGES.map((stage) => (
+                      <button
+                        key={stage}
+                        type="button"
+                        onClick={() => fillCheckedProxies(stage)}
+                        disabled={!goodProxyItems.length}
+                        className="rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300"
+                      >
+                        填入{customProxyStageLabel(paymentMethod, stage)}
+                      </button>
+                    ))}
+                  </div>
+
+                  {proxyCheckError && (
+                    <div className="mt-3 rounded-md bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                      {proxyCheckError}
+                    </div>
+                  )}
+
+                  {proxyCheckResult && (
+                    <div className="mt-3 max-h-56 overflow-auto rounded-md border border-gray-200">
+                      <table className="w-full min-w-[520px] text-left text-xs">
+                        <thead className="bg-gray-50 text-gray-500">
+                          <tr>
+                            <th className="px-3 py-2 font-medium">#</th>
+                            <th className="px-3 py-2 font-medium">代理</th>
+                            <th className="px-3 py-2 font-medium">出口 IP</th>
+                            <th className="px-3 py-2 font-medium">状态</th>
+                            <th className="px-3 py-2 font-medium">延迟</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {proxyCheckResult.items.map((item: ProxyCheckItem) => (
+                            <tr key={`${item.id}-${item.raw}`} className="border-t border-gray-100">
+                              <td className="px-3 py-2 font-mono text-gray-400">{item.id}</td>
+                              <td className="max-w-56 truncate px-3 py-2 font-mono text-gray-700" title={item.raw}>{item.raw}</td>
+                              <td className="px-3 py-2 font-mono text-gray-600">{item.ip || '-'}</td>
+                              <td className={`px-3 py-2 font-medium ${item.ok ? 'text-emerald-700' : 'text-rose-600'}`} title={item.error || item.status}>
+                                {item.status}
+                              </td>
+                              <td className="px-3 py-2 font-mono text-gray-500">{item.latency_ms ? `${item.latency_ms} ms` : '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </details>
           </section>
 
           <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
@@ -794,7 +1013,13 @@ export function LinkExtract() {
                 disabled={loading || !canSubmit}
                 className="h-11 w-full rounded-lg bg-emerald-600 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-gray-300"
               >
-                {loading ? '提交中...' : activeCount > 0 ? '再开一个提取任务' : '开始提取'}
+                {loading
+                  ? '提交中...'
+                  : accessTokenLineCount > 1
+                    ? `批量提交 ${accessTokenLineCount} 个任务`
+                    : activeCount > 0
+                      ? '再开一个提取任务'
+                      : '开始提取'}
               </button>
               {hasFinishedJobs && (
                 <button

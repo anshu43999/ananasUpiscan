@@ -106,6 +106,40 @@ export function testProxyChain(
   });
 }
 
+export interface ProxyCheckItem {
+  id: number;
+  raw: string;
+  proxy: string;
+  ok: boolean;
+  ip?: string | null;
+  status: string;
+  latency_ms?: number | null;
+  error?: string | null;
+}
+
+export interface ProxyCheckResponse {
+  items: ProxyCheckItem[];
+  total: number;
+  ok: number;
+  failed: number;
+}
+
+export interface ProxyCheckOptions {
+  proxies: string;
+  protocol: 'http' | 'socks5' | 'socks5h';
+  concurrency: number;
+  timeout_ms: number;
+}
+
+export function checkProxies(
+  options: ProxyCheckOptions,
+): Promise<ProxyCheckResponse> {
+  return extractFetch('/api/proxy-check', {
+    method: 'POST',
+    body: JSON.stringify(options),
+  });
+}
+
 export function extractJobWsUrl(jobId: string): string {
   const base = getExtractApiBase();
   const path = `/api/extract/jobs/${jobId}/ws`;

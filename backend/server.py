@@ -12,8 +12,11 @@ from .models import (
     ExtractJobCreate,
     ExtractJobCreated,
     ExtractJobSnapshot,
+    ProxyCheckRequest,
+    ProxyCheckResponse,
     ProxyChainTestResult,
 )
+from .proxy_check import check_proxies
 from .ws_manager import WebSocketManager
 
 
@@ -70,6 +73,18 @@ async def cancel_extract_job(job_id: str) -> ExtractJobSnapshot:
 @app.post("/api/proxy-chain-test", response_model=ProxyChainTestResult)
 async def proxy_chain_test() -> ProxyChainTestResult:
     return ProxyChainTestResult(success=True, latency_ms=0)
+
+
+@app.post("/api/proxy-check", response_model=ProxyCheckResponse)
+async def proxy_check(request: ProxyCheckRequest) -> ProxyCheckResponse:
+    items = check_proxies(
+        proxies=request.proxies,
+        protocol=request.protocol,
+        concurrency=request.concurrency,
+        timeout_ms=request.timeout_ms,
+    )
+    ok = sum(1 for item in items if item.ok)
+    return ProxyCheckResponse(items=items, total=len(items), ok=ok, failed=len(items) - ok)
 
 
 @app.websocket("/api/extract/jobs/{job_id}/ws")

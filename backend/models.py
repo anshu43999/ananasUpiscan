@@ -67,3 +67,28 @@ class ProxyChainTestResult(BaseModel):
     success: bool
     latency_ms: int | None = None
     error: str | None = None
+
+
+class ProxyCheckRequest(BaseModel):
+    proxies: str = Field(min_length=1)
+    protocol: Literal["http", "socks5", "socks5h"] = "http"
+    concurrency: int = Field(default=20, ge=1, le=100)
+    timeout_ms: int = Field(default=10000, ge=1000, le=60000)
+
+
+class ProxyCheckItem(BaseModel):
+    id: int
+    raw: str
+    proxy: str
+    ok: bool
+    ip: str | None = None
+    status: str
+    latency_ms: int | None = None
+    error: str | None = None
+
+
+class ProxyCheckResponse(BaseModel):
+    items: list[ProxyCheckItem] = Field(default_factory=list)
+    total: int = 0
+    ok: int = 0
+    failed: int = 0
