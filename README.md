@@ -1,5 +1,7 @@
 # UPIScan
 
+Supported extraction channels: UPI, iDEAL, MoMo, Kakao, and 直卡.
+
 ## Docker
 
 Build and run the full FastAPI + React app:

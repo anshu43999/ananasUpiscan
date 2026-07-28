@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .extractor.context import ExtractionContext
+from .extractor.card import run_card_single_link_mode
 from .extractor.extract import config_from_env, load_token, run_single_link_mode
 from .extractor.ideal import run_ideal_single_link_mode
 from .extractor.kakao import run_kakao_single_link_mode
@@ -109,6 +110,38 @@ def run_extract_worker(job_id: str, payload: dict[str, Any], log_queue: Queue) -
             config["elements_locale"] = os.environ.get("KAKAO_ELEMENTS_LOCALE", "ko").strip() or "ko"
         if "browser_timezone" not in request_config:
             config["browser_timezone"] = os.environ.get("KAKAO_BROWSER_TIMEZONE", "Asia/Seoul").strip() or "Asia/Seoul"
+    elif payment_method == "card":
+        card_update_countries = [
+            item.strip().upper()
+            for item in os.environ.get("CARD_UPDATE_PROXY_COUNTRIES", "TR,JP").replace(";", ",").split(",")
+            if item.strip()
+        ] or ["TR", "JP"]
+        if "bootstrap_country" not in request_config:
+            config["bootstrap_country"] = os.environ.get("CARD_CHECKOUT_PROXY_COUNTRY", "US").strip() or "US"
+        if "promotion_countries" not in request_config:
+            config["promotion_countries"] = card_update_countries
+        if "provider_country" not in request_config:
+            config["provider_country"] = card_update_countries[0]
+        if "provider_country_label" not in request_config:
+            config["provider_country_label"] = str(config.get("provider_country") or "TR")
+        if "billing_country" not in request_config:
+            config["billing_country"] = os.environ.get("CARD_BILLING_COUNTRY", "PH").strip() or "PH"
+        if "card_billing_country" not in request_config:
+            config["card_billing_country"] = str(config.get("billing_country") or "PH")
+        if "card_currency" not in request_config:
+            config["card_currency"] = os.environ.get("CARD_CURRENCY", "PHP").strip() or "PHP"
+        if "card_checkout_proxy_country" not in request_config:
+            config["card_checkout_proxy_country"] = str(config.get("bootstrap_country") or "US")
+        if "card_update_proxy_countries" not in request_config:
+            config["card_update_proxy_countries"] = card_update_countries
+        if "card_update_proxy_country" not in request_config:
+            config["card_update_proxy_country"] = str(config.get("provider_country") or "TR")
+        if "browser_locale" not in request_config:
+            config["browser_locale"] = os.environ.get("CARD_BROWSER_LOCALE", "en-US").strip() or "en-US"
+        if "elements_locale" not in request_config:
+            config["elements_locale"] = os.environ.get("CARD_ELEMENTS_LOCALE", "en").strip() or "en"
+        if "browser_timezone" not in request_config:
+            config["browser_timezone"] = os.environ.get("CARD_BROWSER_TIMEZONE", "Asia/Manila").strip() or "Asia/Manila"
 
     ctx = QueueExtractionContext(config=config, log_queue=log_queue)
     try:
@@ -120,6 +153,8 @@ def run_extract_worker(job_id: str, payload: dict[str, Any], log_queue: Queue) -
             exit_code = run_kakao_single_link_mode(ctx, access_token, session_token, proxy_seeds)
         elif payment_method == "momo":
             exit_code = run_momo_single_link_mode(ctx, access_token, session_token, proxy_seeds)
+        elif payment_method == "card":
+            exit_code = run_card_single_link_mode(ctx, access_token, session_token, proxy_seeds)
         elif payment_method == "upi":
             exit_code = run_single_link_mode(ctx, access_token, session_token, proxy_seeds)
         else:

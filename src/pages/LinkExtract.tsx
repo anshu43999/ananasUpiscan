@@ -27,7 +27,7 @@ const STATUS_COLORS: Record<string, string> = {
   cancelled: 'border-gray-200 bg-gray-50 text-gray-600',
 };
 
-const COUNTRY_OPTIONS = ['IN', 'VN', 'US', 'NL', 'JP', 'KR', 'BR', 'DE', 'FR', 'GB'];
+const COUNTRY_OPTIONS = ['IN', 'VN', 'US', 'TR', 'PH', 'NL', 'JP', 'KR', 'BR', 'DE', 'FR', 'GB'];
 const PROXY_STAGES = ['checkout', 'promotion', 'provider', 'approve'] as const;
 const CUSTOM_PROXY_STAGES = ['checkout', 'promotion'] as const;
 const PROXY_STAGE_LABELS: Record<(typeof PROXY_STAGES)[number], string> = {
@@ -39,7 +39,7 @@ const PROXY_STAGE_LABELS: Record<(typeof PROXY_STAGES)[number], string> = {
 const STORAGE_KEY_PROXY = 'upiscan_extract_proxy';
 
 type ProxyStage = (typeof PROXY_STAGES)[number];
-type PaymentMethod = 'upi' | 'ideal' | 'momo' | 'kakao';
+type PaymentMethod = 'upi' | 'ideal' | 'momo' | 'kakao' | 'card';
 type ProxySourceMode = 'builtin' | 'custom';
 type AudioContextRef = MutableRefObject<AudioContext | null>;
 
@@ -65,6 +65,7 @@ const PAYMENT_METHODS: PaymentMethodOption[] = [
   { value: 'ideal', label: 'iDEAL', route: 'JP / NL', result: '支付长链' },
   { value: 'momo', label: 'MoMo', route: 'VN / VND', result: '支付长链' },
   { value: 'kakao', label: 'Kakao', route: 'KR / VN / KR', result: '支付长链' },
+  { value: 'card', label: '直卡', route: 'US / TR|JP / PH', result: 'Checkout 短链' },
 ];
 
 function loadProxyState(): SavedProxyState | null {
@@ -86,10 +87,12 @@ function buildProxyChain(
   if (mode === 'ideal') return { checkout: 'JP', promotion: 'NL', provider: 'NL', approve: 'NL' };
   if (mode === 'momo') return { checkout: 'VN', promotion: 'VN', provider: 'VN', approve: 'VN' };
   if (mode === 'kakao') return { checkout: 'KR', promotion: 'VN', provider: 'KR', approve: 'KR' };
+  if (mode === 'card') return { checkout: 'US', promotion: 'TR', provider: 'TR', approve: 'TR' };
   if (mode === 'manual') return { ...manualRegions };
   if (paymentMethod === 'ideal') return { checkout: 'JP', promotion: 'NL', provider: 'NL', approve: 'NL' };
   if (paymentMethod === 'momo') return { checkout: 'VN', promotion: 'VN', provider: 'VN', approve: 'VN' };
   if (paymentMethod === 'kakao') return { checkout: 'KR', promotion: 'VN', provider: 'KR', approve: 'KR' };
+  if (paymentMethod === 'card') return { checkout: 'US', promotion: 'TR', provider: 'TR', approve: 'TR' };
   return undefined;
 }
 
@@ -128,6 +131,19 @@ function configFromProxyChain(
     config.browser_locale = 'ko-KR';
     config.elements_locale = 'ko';
     config.browser_timezone = 'Asia/Seoul';
+  }
+  if (paymentMethod === 'card') {
+    config.billing_country = 'PH';
+    config.card_billing_country = 'PH';
+    config.card_currency = 'PHP';
+    config.card_checkout_proxy_country = chain?.checkout || 'US';
+    config.card_update_proxy_country = chain?.promotion || 'TR';
+    config.card_update_proxy_countries = Array.from(new Set([chain?.promotion || 'TR', 'JP']));
+    config.provider_country = chain?.promotion || 'TR';
+    config.provider_country_label = chain?.promotion || 'TR';
+    config.browser_locale = 'en-US';
+    config.elements_locale = 'en';
+    config.browser_timezone = 'Asia/Manila';
   }
   if (chain?.checkout) config.bootstrap_country = chain.checkout;
   if (chain?.promotion) config.promotion_countries = [chain.promotion];
@@ -180,6 +196,7 @@ function customProxyStageLabel(paymentMethod: PaymentMethod, stage: (typeof CUST
   if (paymentMethod === 'ideal') return stage === 'checkout' ? 'JP 代理' : 'NL 代理';
   if (paymentMethod === 'momo') return stage === 'checkout' ? 'VN checkout 代理' : 'VN init 代理';
   if (paymentMethod === 'kakao') return stage === 'checkout' ? 'KR 代理' : 'VN 代理';
+  if (paymentMethod === 'card') return stage === 'checkout' ? 'US checkout 代理' : 'TR / JP update 代理';
   return stage === 'checkout' ? 'JP 代理' : 'IN 代理';
 }
 
@@ -187,6 +204,7 @@ function customProxyEmptyText(paymentMethod: PaymentMethod): string {
   if (paymentMethod === 'ideal') return '需要 JP 与 NL 两段代理';
   if (paymentMethod === 'momo') return '需要两段 VN 代理';
   if (paymentMethod === 'kakao') return '需要 KR 与 VN 两段代理';
+  if (paymentMethod === 'card') return '需要 US 与 TR/JP 两段代理';
   return '需要 JP 与 IN 两段代理';
 }
 
@@ -194,6 +212,7 @@ function defaultManualRegions(paymentMethod: PaymentMethod): Record<ProxyStage, 
   if (paymentMethod === 'ideal') return { checkout: 'JP', promotion: 'NL', provider: 'NL', approve: 'NL' };
   if (paymentMethod === 'momo') return { checkout: 'VN', promotion: 'VN', provider: 'VN', approve: 'VN' };
   if (paymentMethod === 'kakao') return { checkout: 'KR', promotion: 'VN', provider: 'KR', approve: 'KR' };
+  if (paymentMethod === 'card') return { checkout: 'US', promotion: 'TR', provider: 'TR', approve: 'TR' };
   return { checkout: 'JP', promotion: 'IN', provider: 'IN', approve: 'IN' };
 }
 
@@ -201,6 +220,7 @@ function defaultBillingCountry(paymentMethod: PaymentMethod): string {
   if (paymentMethod === 'ideal') return 'NL';
   if (paymentMethod === 'momo') return 'VN';
   if (paymentMethod === 'kakao') return 'KR';
+  if (paymentMethod === 'card') return 'PH';
   return 'IN';
 }
 
@@ -208,6 +228,7 @@ function routeText(paymentMethod: PaymentMethod): string {
   if (paymentMethod === 'ideal') return 'JP checkout / NL iDEAL';
   if (paymentMethod === 'momo') return 'VN checkout / VN Stripe init';
   if (paymentMethod === 'kakao') return 'KR checkout / VN update / KR Kakao';
+  if (paymentMethod === 'card') return 'US checkout / TR|JP update / PH billing';
   return 'JP checkout / IN UPI';
 }
 
@@ -486,7 +507,7 @@ export function LinkExtract() {
   const accessTokenLineCount = accessTokenItems.length;
   const accessTokenTooMany = rawAccessTokenInputCount > 10 && !accessToken.trim().startsWith('{') && !accessToken.trim().startsWith('[');
   const canSubmit = accessTokenLineCount > 0 && !accessTokenTooMany && (proxySourceMode !== 'custom' || customProxyCount > 0);
-  const fixedBillingCountry = paymentMethod === 'ideal' || paymentMethod === 'momo' || paymentMethod === 'kakao';
+  const fixedBillingCountry = paymentMethod === 'ideal' || paymentMethod === 'momo' || paymentMethod === 'kakao' || paymentMethod === 'card';
   const activePaymentMethod = PAYMENT_METHODS.find((item) => item.value === paymentMethod) || PAYMENT_METHODS[0];
   const goodProxyItems = useMemo(
     () => (proxyCheckResult?.items || []).filter((item) => item.ok && item.raw),
@@ -806,6 +827,7 @@ export function LinkExtract() {
                     {paymentMethod === 'ideal' && <option value="ideal">JP checkout / NL iDEAL provider</option>}
                     {paymentMethod === 'momo' && <option value="momo">VN checkout / VN Stripe init</option>}
                     {paymentMethod === 'kakao' && <option value="kakao">KR checkout / VN update / KR Kakao</option>}
+                    {paymentMethod === 'card' && <option value="card">US checkout / TR|JP update / PH billing</option>}
                     <option value="manual">手动选择国家</option>
                   </select>
                 </label>

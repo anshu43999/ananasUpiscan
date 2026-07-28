@@ -35,7 +35,7 @@ class ExtractJobResult(BaseModel):
 class ExtractJobCreate(BaseModel):
     access_token: str = Field(min_length=1)
     session_token: str | None = None
-    payment_method: Literal["upi", "ideal", "momo", "kakao"] = "upi"
+    payment_method: Literal["upi", "ideal", "momo", "kakao", "card"] = "upi"
     billing_country: str = "IN"
     proxy_seeds: list[str] = Field(default_factory=list)
     proxy_seed_chains: list[dict[str, str]] = Field(default_factory=list)
