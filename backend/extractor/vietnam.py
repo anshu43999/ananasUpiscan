@@ -123,6 +123,75 @@ def run_momo_probe(
     return url
 
 
+def check_momo_permission_once(
+    ctx: ExtractionContext,
+    access_token: str,
+    session_token: str,
+    proxy_seed: str,
+) -> dict[str, Any]:
+    checkout_proxy, provider_proxy = momo_proxy_chain(ctx, proxy_seed)
+    log_momo_proxy_chain(ctx, proxy_seed, checkout_proxy, provider_proxy)
+
+    checkout_country = normalize_country(_cfg_str(ctx, "checkout_country", "VN", "MOMO_CHECKOUT_COUNTRY"))
+    chatgpt = build_chatgpt_session(ctx, access_token, str(uuid.uuid4()), checkout_proxy, session_token)
+    checkout = create_checkout(ctx, chatgpt, checkout_country)
+    stripe_pk = checkout.get("stripe_pk") or DEFAULT_STRIPE_PK
+
+    ctx.log(f"MoMo permission check Stripe init: proxy={proxy_label(provider_proxy)}")
+    init_payload = stripe_init(ctx, checkout["cs_id"], stripe_pk, provider_proxy)
+    log_payment_page_summary(ctx, "momo_permission_check", init_payload)
+
+    methods = _payment_methods_from_init(init_payload)
+    local_methods = _local_methods(methods)
+    amount = amount_from_payload(init_payload)
+    currency = str(init_payload.get("currency") or currency_for_country(checkout_country)).upper()
+    checkout_url = str(init_payload.get("stripe_hosted_url") or "") or checkout_page_url(checkout)
+    available = "momo" in local_methods
+    ctx.log(f"MoMo permission check result: available={available}, methods={methods}, amount={amount}")
+    return {
+        "available": available,
+        "status": "available" if available else "unavailable",
+        "payment_method_types": methods,
+        "local_methods": local_methods,
+        "amount": amount,
+        "currency": currency,
+        "checkout_id": checkout.get("cs_id"),
+        "checkout_url": checkout_url,
+        "error": None if available else f"MoMo_unavailable: payment_method_types={methods}",
+    }
+
+
+def check_momo_permission(
+    ctx: ExtractionContext,
+    access_token: str,
+    session_token: str,
+    proxy_seeds: list[str],
+) -> dict[str, Any]:
+    checkout_retry = _cfg_int(ctx, "momo_permission_retry", 3, alias="MOMO_PERMISSION_RETRY")
+    if not proxy_seeds:
+        raise RuntimeError("代理 Seed 为空")
+    candidates = _pick_seed_candidates(ctx, proxy_seeds, checkout_retry)
+    last_error = ""
+    for index, proxy_seed in enumerate(candidates, start=1):
+        try:
+            ctx.log(f"MoMo permission check {index}/{len(candidates)}")
+            return check_momo_permission_once(ctx, access_token, session_token, proxy_seed)
+        except Exception as exc:
+            last_error = str(exc)
+            ctx.log(f"MoMo permission check failed: {last_error[:220]}", "[WARN] ")
+    return {
+        "available": False,
+        "status": "failed",
+        "payment_method_types": [],
+        "local_methods": [],
+        "amount": None,
+        "currency": None,
+        "checkout_id": None,
+        "checkout_url": None,
+        "error": last_error or "MoMo permission check failed",
+    }
+
+
 def run_momo_attempt(
     ctx: ExtractionContext,
     access_token: str,

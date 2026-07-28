@@ -69,6 +69,27 @@ class ProxyChainTestResult(BaseModel):
     error: str | None = None
 
 
+class MomoPermissionCheckRequest(BaseModel):
+    access_token: str = Field(min_length=1)
+    session_token: str | None = None
+    proxy_seeds: list[str] = Field(default_factory=list)
+    proxy_seed_chains: list[dict[str, str]] = Field(default_factory=list)
+    capture_diagnostics: bool = False
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class MomoPermissionCheckResponse(BaseModel):
+    available: bool
+    status: str
+    payment_method_types: list[str] = Field(default_factory=list)
+    local_methods: list[str] = Field(default_factory=list)
+    amount: int | None = None
+    currency: str | None = None
+    checkout_id: str | None = None
+    checkout_url: str | None = None
+    error: str | None = None
+
+
 class ProxyCheckRequest(BaseModel):
     proxies: str = Field(min_length=1)
     protocol: Literal["http", "socks5", "socks5h"] = "http"

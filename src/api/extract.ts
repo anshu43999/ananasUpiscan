@@ -106,6 +106,36 @@ export function testProxyChain(
   });
 }
 
+export interface MomoPermissionCheckOptions {
+  access_token: string;
+  session_token?: string;
+  proxy_seeds?: string[];
+  proxy_seed_chains?: Array<Record<string, string>>;
+  capture_diagnostics?: boolean;
+  config?: Record<string, unknown>;
+}
+
+export interface MomoPermissionCheckResponse {
+  available: boolean;
+  status: string;
+  payment_method_types: string[];
+  local_methods: string[];
+  amount?: number | null;
+  currency?: string | null;
+  checkout_id?: string | null;
+  checkout_url?: string | null;
+  error?: string | null;
+}
+
+export function checkMomoPermission(
+  options: MomoPermissionCheckOptions,
+): Promise<MomoPermissionCheckResponse> {
+  return extractFetch('/api/momo-permission-check', {
+    method: 'POST',
+    body: JSON.stringify(options),
+  });
+}
+
 export interface ProxyCheckItem {
   id: number;
   raw: string;

@@ -1168,6 +1168,7 @@ def config_from_env(script_dir: str | Path | None = None) -> dict[str, Any]:
         "MOMO_MAX_RETRY",
         "MOMO_WORKERS",
         "MOMO_WORKERS_MAX",
+        "MOMO_PERMISSION_RETRY",
         "KAKAO_BOOTSTRAP_COUNTRY",
         "KAKAO_PROMOTION_COUNTRY",
         "KAKAO_PROVIDER_COUNTRY",

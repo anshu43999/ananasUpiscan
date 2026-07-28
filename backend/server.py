@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 
@@ -12,10 +13,15 @@ from .models import (
     ExtractJobCreate,
     ExtractJobCreated,
     ExtractJobSnapshot,
+    MomoPermissionCheckRequest,
+    MomoPermissionCheckResponse,
     ProxyCheckRequest,
     ProxyCheckResponse,
     ProxyChainTestResult,
 )
+from .extractor.context import ExtractionContext
+from .extractor.extract import config_from_env, load_token
+from .extractor.vietnam import check_momo_permission
 from .proxy_check import check_proxies
 from .ws_manager import WebSocketManager
 
@@ -73,6 +79,57 @@ async def cancel_extract_job(job_id: str) -> ExtractJobSnapshot:
 @app.post("/api/proxy-chain-test", response_model=ProxyChainTestResult)
 async def proxy_chain_test() -> ProxyChainTestResult:
     return ProxyChainTestResult(success=True, latency_ms=0)
+
+
+def _run_momo_permission_check(request: MomoPermissionCheckRequest) -> MomoPermissionCheckResponse:
+    config = config_from_env(Path.cwd())
+    request_config = request.config or {}
+    config.update(request_config)
+    config["PP_TOKEN"] = request.access_token
+    if request.session_token:
+        config["PP_SESSION_TOKEN"] = request.session_token
+    if request.proxy_seeds:
+        config["proxy_seeds"] = request.proxy_seeds
+        config["proxy_remove_failed"] = False
+    if request.proxy_seed_chains:
+        config["proxy_seed_chains"] = request.proxy_seed_chains
+        config["proxy_remove_failed"] = False
+    if request.capture_diagnostics:
+        config["dump"] = True
+    if "checkout_country" not in request_config:
+        config["checkout_country"] = "VN"
+    if "billing_country" not in request_config:
+        config["billing_country"] = "VN"
+    if "provider_country" not in request_config:
+        config["provider_country"] = "VN"
+    if "provider_country_label" not in request_config:
+        config["provider_country_label"] = "VN"
+    if "browser_locale" not in request_config:
+        config["browser_locale"] = "vi-VN"
+    if "elements_locale" not in request_config:
+        config["elements_locale"] = "vi"
+    if "browser_timezone" not in request_config:
+        config["browser_timezone"] = "Asia/Ho_Chi_Minh"
+    if "promo_mode" not in request_config and "PP_PROMO_MODE" not in os.environ:
+        config["promo_mode"] = "off"
+
+    ctx = ExtractionContext(config=config)
+    access_token, session_token = load_token(ctx)
+    proxy_seeds = ctx.load_proxy_seeds()
+    result = check_momo_permission(ctx, access_token, session_token, proxy_seeds)
+    return MomoPermissionCheckResponse(**result)
+
+
+@app.post("/api/momo-permission-check", response_model=MomoPermissionCheckResponse)
+async def momo_permission_check(request: MomoPermissionCheckRequest) -> MomoPermissionCheckResponse:
+    try:
+        return await asyncio.to_thread(_run_momo_permission_check, request)
+    except Exception as exc:
+        return MomoPermissionCheckResponse(
+            available=False,
+            status="failed",
+            error=str(exc),
+        )
 
 
 @app.post("/api/proxy-check", response_model=ProxyCheckResponse)

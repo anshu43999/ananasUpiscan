@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObjec
 import QRCode from 'qrcode';
 import { useExtractJobs } from '../hooks/useExtractJob';
 import {
+  checkMomoPermission,
   checkProxies,
   testProxyChain,
   type ExtractJobResponse,
+  type MomoPermissionCheckResponse,
   type ProxyCheckItem,
   type ProxyCheckResponse,
   type ProxyChainTestResult,
@@ -58,6 +60,13 @@ interface PaymentMethodOption {
   label: string;
   route: string;
   result: string;
+}
+
+interface MomoPermissionBatchItem {
+  index: number;
+  tokenLabel: string;
+  result: MomoPermissionCheckResponse | null;
+  error: string | null;
 }
 
 const PAYMENT_METHODS: PaymentMethodOption[] = [
@@ -171,6 +180,13 @@ function parseAccessTokenInputs(value: string): string[] {
     .map((line) => line.trim())
     .filter(Boolean)
     .slice(0, 10);
+}
+
+function tokenPreview(value: string, index: number): string {
+  const token = value.trim();
+  if (!token) return `AT ${index + 1}`;
+  if (token.length <= 14) return `AT ${index + 1}`;
+  return `AT ${index + 1}: ${token.slice(0, 6)}...${token.slice(-4)}`;
 }
 
 function buildProxySeedChains(
@@ -462,6 +478,11 @@ export function LinkExtract() {
   const [proxyCheckLoading, setProxyCheckLoading] = useState(false);
   const [proxyCheckResult, setProxyCheckResult] = useState<ProxyCheckResponse | null>(null);
   const [proxyCheckError, setProxyCheckError] = useState<string | null>(null);
+  const [momoPermissionLoading, setMomoPermissionLoading] = useState(false);
+  const [momoPermissionResults, setMomoPermissionResults] = useState<MomoPermissionBatchItem[]>([]);
+  const [momoPermissionError, setMomoPermissionError] = useState<string | null>(null);
+  const [momoPermissionSubmitting, setMomoPermissionSubmitting] = useState<Set<number>>(new Set());
+  const [momoPermissionQueued, setMomoPermissionQueued] = useState<Set<number>>(new Set());
 
   const proxyChain = useMemo(
     () => buildProxyChain(proxyChainMode, manualRegions, paymentMethod),
@@ -495,6 +516,10 @@ export function LinkExtract() {
       return 'default';
     });
     setTestResult(null);
+    setMomoPermissionResults([]);
+    setMomoPermissionError(null);
+    setMomoPermissionSubmitting(new Set());
+    setMomoPermissionQueued(new Set());
   }, []);
 
   const customProxyCount = buildProxySeedChains(customProxyTexts, paymentMethod).length;
@@ -615,6 +640,120 @@ export function LinkExtract() {
     }
   }, [proxyCheckConcurrency, proxyCheckInput, proxyCheckProtocol, proxyCheckTimeoutMs]);
 
+  const handleMomoPermissionCheck = useCallback(async () => {
+    if (!accessTokenItems.length) {
+      setMomoPermissionError('请先填写 Access Token。');
+      return;
+    }
+    const proxySeedChains = proxySourceMode === 'custom' ? buildProxySeedChains(customProxyTexts, 'momo') : [];
+    if (proxySourceMode === 'custom' && proxySeedChains.length === 0) {
+      setMomoPermissionError('请先填写两段 VN 代理。');
+      return;
+    }
+    setMomoPermissionLoading(true);
+    setMomoPermissionQueued(new Set());
+    setMomoPermissionResults(
+      accessTokenItems.map((token, index) => ({
+        index,
+        tokenLabel: tokenPreview(token, index),
+        result: null,
+        error: null,
+      })),
+    );
+    setMomoPermissionError(null);
+    try {
+      const config = {
+        ...(configFromProxyChain(buildProxyChain('momo', defaultManualRegions('momo'), 'momo'), customExportProxy, 'momo') || {}),
+        momo_permission_retry: 3,
+      };
+      const results = await Promise.all(
+        accessTokenItems.map(async (token, index): Promise<MomoPermissionBatchItem> => {
+          try {
+            const result = await checkMomoPermission({
+              access_token: token,
+              session_token: sessionToken.trim() || undefined,
+              proxy_seed_chains: proxySeedChains.length ? proxySeedChains : undefined,
+              capture_diagnostics: captureDiagnostics,
+              config,
+            });
+            return {
+              index,
+              tokenLabel: tokenPreview(token, index),
+              result,
+              error: null,
+            };
+          } catch (e: unknown) {
+            return {
+              index,
+              tokenLabel: tokenPreview(token, index),
+              result: null,
+              error: e instanceof Error ? e.message : 'MoMo 权限检测失败',
+            };
+          }
+        }),
+      );
+      setMomoPermissionResults(results);
+    } catch (e: unknown) {
+      setMomoPermissionError(e instanceof Error ? e.message : 'MoMo 权限检测失败');
+    } finally {
+      setMomoPermissionLoading(false);
+    }
+  }, [
+    accessTokenItems,
+    captureDiagnostics,
+    customExportProxy,
+    customProxyTexts,
+    proxySourceMode,
+    sessionToken,
+  ]);
+
+  const handleMomoPermissionExtract = useCallback(async (item: MomoPermissionBatchItem) => {
+    const token = accessTokenItems[item.index];
+    if (!token || item.result?.available !== true) return;
+    const proxySeedChains = proxySourceMode === 'custom' ? buildProxySeedChains(customProxyTexts, 'momo') : [];
+    if (proxySourceMode === 'custom' && proxySeedChains.length === 0) {
+      setMomoPermissionError('请先填写两段 VN 代理。');
+      return;
+    }
+
+    setMomoPermissionSubmitting((current) => new Set(current).add(item.index));
+    setMomoPermissionError(null);
+    try {
+      primeResultSound(resultAudioContextRef);
+      const options: StartExtractOptions = {
+        access_token: token,
+        session_token: sessionToken.trim() || undefined,
+        payment_method: 'momo',
+        billing_country: 'VN',
+        proxy_seed_chains: proxySeedChains.length ? proxySeedChains : undefined,
+        capture_diagnostics: captureDiagnostics,
+        config: configFromProxyChain(
+          buildProxyChain('momo', defaultManualRegions('momo'), 'momo'),
+          customExportProxy,
+          'momo',
+        ),
+      };
+      await submit(options);
+      setMomoPermissionQueued((current) => new Set(current).add(item.index));
+    } catch (e: unknown) {
+      setMomoPermissionError(e instanceof Error ? e.message : '提交 MoMo 提取任务失败');
+    } finally {
+      setMomoPermissionSubmitting((current) => {
+        const next = new Set(current);
+        next.delete(item.index);
+        return next;
+      });
+    }
+  }, [
+    accessTokenItems,
+    captureDiagnostics,
+    customExportProxy,
+    customProxyTexts,
+    proxySourceMode,
+    sessionToken,
+    submit,
+  ]);
+
   const fillCheckedProxies = useCallback((stage: (typeof CUSTOM_PROXY_STAGES)[number]) => {
     const text = goodProxyItems.map((item) => item.raw).join('\n');
     if (!text) return;
@@ -693,6 +832,102 @@ export function LinkExtract() {
           <span>{routeText(paymentMethod)}</span>
         </div>
       </section>
+
+      {paymentMethod === 'momo' && (
+        <section className="rounded-lg border border-amber-200 bg-amber-50/70 p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-semibold text-amber-950">MoMo 权限检测</h3>
+              <p className="mt-1 text-sm text-amber-800">
+                使用当前全部 AT 和 VN 代理并发读取 checkout 支付方式，不提交支付。
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleMomoPermissionCheck()}
+              disabled={momoPermissionLoading || !accessTokenItems.length || (proxySourceMode === 'custom' && customProxyCount === 0)}
+              className="h-9 rounded-md bg-amber-600 px-4 text-sm font-semibold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+            >
+              {momoPermissionLoading
+                ? '检测中...'
+                : accessTokenItems.length > 1
+                  ? `批量检测 ${accessTokenItems.length} 个 AT`
+                  : '检测 AT 权限'}
+            </button>
+          </div>
+
+          {momoPermissionError && (
+            <div className="mt-3 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              {momoPermissionError}
+            </div>
+          )}
+
+          {momoPermissionResults.length > 0 && (
+            <div className="mt-4 space-y-2">
+              {momoPermissionResults.map((item) => {
+                const available = item.result?.available === true;
+                const pending = momoPermissionLoading && !item.result && !item.error;
+                return (
+                  <div key={item.index} className="grid gap-2 md:grid-cols-[180px_minmax(0,1fr)]">
+                    <div
+                      className={`rounded-md border px-3 py-2 text-sm font-semibold ${
+                        pending
+                          ? 'border-amber-200 bg-white text-amber-700'
+                          : available
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                            : 'border-rose-200 bg-rose-50 text-rose-700'
+                      }`}
+                    >
+                      <div>{item.tokenLabel}</div>
+                      <div className="mt-1 text-xs font-medium">
+                        {pending ? '检测中' : available ? 'MoMo 可用' : 'MoMo 不可用'}
+                      </div>
+                    </div>
+                    <div className="min-w-0 rounded-md border border-amber-200 bg-white/80 px-3 py-2 text-xs text-gray-700">
+                      {item.result ? (
+                        <>
+                          <div className="flex flex-wrap gap-x-4 gap-y-1">
+                            <span>状态：{item.result.status}</span>
+                            <span>金额：{item.result.amount ?? '-'} {item.result.currency || ''}</span>
+                            <span>Checkout：{item.result.checkout_id || '-'}</span>
+                          </div>
+                          <div className="mt-1 break-all font-mono">
+                            methods: {(item.result.payment_method_types || []).join(', ') || '-'}
+                          </div>
+                          {item.result.error && (
+                            <div className="mt-1 text-rose-600">{item.result.error}</div>
+                          )}
+                          {available && (
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void handleMomoPermissionExtract(item)}
+                                disabled={momoPermissionSubmitting.has(item.index) || momoPermissionQueued.has(item.index)}
+                                className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+                              >
+                                {momoPermissionQueued.has(item.index)
+                                  ? '已加入提取队列'
+                                  : momoPermissionSubmitting.has(item.index)
+                                    ? '提交中...'
+                                    : '提取支付链接'}
+                              </button>
+                              <span className="text-gray-500">只提交此 AT 到 MoMo 提链</span>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div className={item.error ? 'text-rose-600' : 'text-amber-700'}>
+                          {item.error || '等待检测结果...'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
 
       <form onSubmit={handleSubmit} className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         <section className="space-y-5 rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
