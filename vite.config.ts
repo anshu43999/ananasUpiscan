@@ -29,6 +29,18 @@ export default defineConfig({
         target: backendTarget,
         changeOrigin: true,
       },
+      '/api/proxy-check': {
+        target: backendTarget,
+        changeOrigin: true,
+      },
+      '/api/momo-permission-check': {
+        target: backendTarget,
+        changeOrigin: true,
+      },
+      '/api/ready-plus': {
+        target: backendTarget,
+        changeOrigin: true,
+      },
     },
   },
 });

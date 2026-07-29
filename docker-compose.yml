@@ -29,6 +29,10 @@ services:
       CARD_MAX_RETRY: "3"
       CARD_CHECKOUT_ATTEMPTS: "10"
       CARD_UPDATE_ATTEMPTS: "15"
+      READY_PLUS_API_BASE: ${READY_PLUS_API_BASE:-https://api.cli-proxy.cn}
+      READY_PLUS_API_KEY: ${READY_PLUS_API_KEY:-}
+      READY_PLUS_TIMEOUT: ${READY_PLUS_TIMEOUT:-30}
+      READY_PLUS_DOWNLOAD_TIMEOUT: ${READY_PLUS_DOWNLOAD_TIMEOUT:-120}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs

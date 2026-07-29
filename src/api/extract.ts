@@ -14,8 +14,17 @@ async function extractFetch<T>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
+    const detail = (body as { detail?: unknown }).detail;
+    const detailMessage =
+      typeof detail === 'string'
+        ? detail
+        : detail && typeof detail === 'object'
+          ? ((detail as { error?: { message?: string; code?: string } }).error?.message ||
+            (detail as { error?: { message?: string; code?: string } }).error?.code ||
+            JSON.stringify(detail))
+          : undefined;
     const message =
-      (body as { detail?: string }).detail ||
+      detailMessage ||
       (body as { message?: string }).message ||
       (body as { error?: string }).error ||
       `Request failed (${res.status})`;
@@ -134,6 +143,116 @@ export function checkMomoPermission(
     method: 'POST',
     body: JSON.stringify(options),
   });
+}
+
+export interface ReadyPlusTaskSubmitItem {
+  client_ref: string;
+  session_json: unknown;
+}
+
+export type ReadyPlusChannel = 'upi' | 'kakao';
+
+export interface ReadyPlusTaskSubmitOptions {
+  channel: ReadyPlusChannel;
+  items: ReadyPlusTaskSubmitItem[];
+  idempotency_key?: string;
+  api_key?: string;
+}
+
+export interface ReadyPlusTaskItem {
+  order_id: string;
+  client_ref: string;
+  channel: ReadyPlusChannel | string;
+  status: 'queued' | 'running' | 'reconciling' | 'succeeded' | 'failed' | 'rejected' | string;
+  charged: string;
+  provider_status: string;
+  error_code: string;
+  result?: Record<string, unknown> | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  completed_at?: string | null;
+}
+
+export interface ReadyPlusTaskSubmitResponse {
+  ok: boolean;
+  task_id?: string | null;
+  status?: string | null;
+  accepted: ReadyPlusTaskItem[];
+  rejected: Array<{ client_ref: string; reason: string }>;
+  balance?: string | null;
+  idempotent_replay: boolean;
+}
+
+export interface ReadyPlusTaskDetail {
+  task_id: string;
+  channel: ReadyPlusChannel | string;
+  source: string;
+  status: string;
+  requested_count: number;
+  accepted_count: number;
+  rejected_count: number;
+  succeeded_count: number;
+  failed_count: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+  completed_at?: string | null;
+  items: ReadyPlusTaskItem[];
+}
+
+export interface ReadyPlusTaskDetailResponse {
+  ok: boolean;
+  task: ReadyPlusTaskDetail;
+}
+
+export interface ReadyPlusDownloadTokenResponse {
+  ok: boolean;
+  url: string;
+  expires_at: number;
+}
+
+function readyPlusAuthHeaders(apiKey?: string): Record<string, string> | undefined {
+  const trimmed = apiKey?.trim();
+  return trimmed ? { 'X-Ready-Plus-Key': trimmed } : undefined;
+}
+
+export function submitReadyPlusTask(
+  options: ReadyPlusTaskSubmitOptions,
+): Promise<ReadyPlusTaskSubmitResponse> {
+  const { api_key, ...payload } = options;
+  return extractFetch('/api/ready-plus/tasks', {
+    method: 'POST',
+    headers: readyPlusAuthHeaders(api_key),
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getReadyPlusTask(taskId: string, apiKey?: string): Promise<ReadyPlusTaskDetailResponse> {
+  return extractFetch(`/api/ready-plus/tasks/${taskId}`, {
+    headers: readyPlusAuthHeaders(apiKey),
+  });
+}
+
+export function getReadyPlusDownloadToken(itemId: string, apiKey?: string): Promise<ReadyPlusDownloadTokenResponse> {
+  return extractFetch(`/api/ready-plus/items/${itemId}/download-token`, {
+    headers: readyPlusAuthHeaders(apiKey),
+  });
+}
+
+export async function downloadReadyPlusArtifact(itemId: string, token: string, apiKey?: string): Promise<Blob> {
+  const res = await fetch(
+    `${getExtractApiBase()}/api/ready-plus/items/${encodeURIComponent(itemId)}/download?token=${encodeURIComponent(token)}`,
+    {
+      headers: readyPlusAuthHeaders(apiKey),
+    },
+  );
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const detail = (body as { detail?: { error?: { message?: string; code?: string } } }).detail;
+    throw new Error(detail?.error?.message || detail?.error?.code || `Download failed (${res.status})`);
+  }
+
+  return res.blob();
 }
 
 export interface ProxyCheckItem {

@@ -2,6 +2,51 @@
 
 Supported extraction channels: UPI, iDEAL, MoMo, Kakao, and 直卡.
 
+## Ready Plus Third-party Tasks
+
+The page also includes a separate `第三方开通` panel. This feature submits
+complete ChatGPT Session JSON objects to Ready Plus and polls the async task
+until it reaches `completed` or `failed`.
+
+Supported Ready Plus channels in this project:
+
+```text
+upi   enabled · 1.2 USDT/item
+kakao enabled · 1 USDT/item
+```
+
+The API key can be entered and saved in the frontend `第三方开通` panel. It is
+stored in the current browser's local storage and sent to the local FastAPI
+backend with `X-Ready-Plus-Key` for each Ready Plus request. The backend forwards
+it server-to-server and does not persist it.
+
+Server-side environment variables are optional fallback values:
+
+```text
+READY_PLUS_API_BASE=https://api.cli-proxy.cn
+READY_PLUS_API_KEY=tg_your_api_key
+READY_PLUS_TIMEOUT=30
+READY_PLUS_DOWNLOAD_TIMEOUT=120
+```
+
+The frontend never calls Ready Plus directly. It calls these local FastAPI
+endpoints instead:
+
+```text
+POST /api/ready-plus/tasks
+GET  /api/ready-plus/tasks/{task_id}
+GET  /api/ready-plus/items/{item_id}/download-token
+GET  /api/ready-plus/items/{item_id}/download?token=...
+```
+
+Input must be the complete JSON returned by:
+
+```text
+https://chatgpt.com/api/auth/session
+```
+
+One third-party submit request supports 1-20 Session JSON items.
+
 ## Docker
 
 Build and run the full FastAPI + React app:

@@ -4,12 +4,20 @@ import { useExtractJobs } from '../hooks/useExtractJob';
 import {
   checkMomoPermission,
   checkProxies,
+  downloadReadyPlusArtifact,
+  getReadyPlusDownloadToken,
+  getReadyPlusTask,
+  submitReadyPlusTask,
   testProxyChain,
   type ExtractJobResponse,
   type MomoPermissionCheckResponse,
   type ProxyCheckItem,
   type ProxyCheckResponse,
   type ProxyChainTestResult,
+  type ReadyPlusChannel,
+  type ReadyPlusTaskDetailResponse,
+  type ReadyPlusTaskItem,
+  type ReadyPlusTaskSubmitResponse,
   type StartExtractOptions,
 } from '../api/extract';
 
@@ -39,6 +47,7 @@ const PROXY_STAGE_LABELS: Record<(typeof PROXY_STAGES)[number], string> = {
   approve: '确认',
 };
 const STORAGE_KEY_PROXY = 'upiscan_extract_proxy';
+const STORAGE_KEY_READY_PLUS_KEY = 'upiscan_ready_plus_api_key';
 
 type ProxyStage = (typeof PROXY_STAGES)[number];
 type PaymentMethod = 'upi' | 'ideal' | 'momo' | 'kakao' | 'card';
@@ -68,6 +77,17 @@ interface MomoPermissionBatchItem {
   result: MomoPermissionCheckResponse | null;
   error: string | null;
 }
+
+interface ReadyPlusParsedSessions {
+  sessions: unknown[];
+  error: string | null;
+}
+
+const READY_PLUS_TASK_TERMINAL = new Set(['completed', 'failed']);
+const READY_PLUS_CHANNELS: Array<{ value: ReadyPlusChannel; label: string; price: string; enabled: boolean }> = [
+  { value: 'upi', label: 'UPI', price: '1.2 USDT / 条', enabled: true },
+  { value: 'kakao', label: 'Kakao', price: '1 USDT / 条', enabled: true },
+];
 
 const PAYMENT_METHODS: PaymentMethodOption[] = [
   { value: 'upi', label: 'UPI', route: 'JP / IN', result: '二维码 / 长链' },
@@ -187,6 +207,78 @@ function tokenPreview(value: string, index: number): string {
   if (!token) return `AT ${index + 1}`;
   if (token.length <= 14) return `AT ${index + 1}`;
   return `AT ${index + 1}: ${token.slice(0, 6)}...${token.slice(-4)}`;
+}
+
+function parseReadyPlusSessions(value: string): ReadyPlusParsedSessions {
+  const trimmed = value.trim();
+  if (!trimmed) return { sessions: [], error: null };
+
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      const sessions = Array.isArray(parsed) ? parsed : [parsed];
+      if (sessions.length > 20) return { sessions: [], error: '第三方接口每次最多提交 20 个 Session。' };
+      return { sessions, error: null };
+    } catch (e: unknown) {
+      return { sessions: [], error: e instanceof Error ? e.message : 'Session JSON 解析失败。' };
+    }
+  }
+
+  const sessions = trimmed
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line) as unknown;
+      } catch {
+        return line;
+      }
+    });
+  if (sessions.length > 20) return { sessions: [], error: '第三方接口每次最多提交 20 个 Session。' };
+  return { sessions, error: null };
+}
+
+function readyPlusStatusLabel(status: string): string {
+  if (status === 'accepted') return '已受理';
+  if (status === 'running') return '处理中';
+  if (status === 'completed') return '已完成';
+  if (status === 'failed') return '失败';
+  if (status === 'queued') return '排队中';
+  if (status === 'reconciling') return '对账中';
+  if (status === 'succeeded') return '成功';
+  if (status === 'rejected') return '已拒绝';
+  return status || '-';
+}
+
+function readyPlusStatusClass(status: string): string {
+  if (status === 'completed' || status === 'succeeded') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  if (status === 'failed' || status === 'rejected') return 'border-rose-200 bg-rose-50 text-rose-700';
+  if (status === 'running' || status === 'reconciling') return 'border-sky-200 bg-sky-50 text-sky-700';
+  return 'border-amber-200 bg-amber-50 text-amber-700';
+}
+
+function readyPlusChannelLabel(channel: ReadyPlusChannel | string): string {
+  return READY_PLUS_CHANNELS.find((item) => item.value === channel)?.label || channel || '-';
+}
+
+function readyPlusChannelSummary(channel: ReadyPlusChannel | string): string {
+  const item = READY_PLUS_CHANNELS.find((entry) => entry.value === channel);
+  if (!item) return channel || '-';
+  return `${item.label}：${item.enabled ? '已启用' : '已停用'} · ${item.price}`;
+}
+
+function readyPlusClientRef(channel: ReadyPlusChannel, index: number): string {
+  return `rp-${channel}-${Date.now()}-${String(index + 1).padStart(2, '0')}`;
+}
+
+function readyPlusTokenFromUrl(value: string): string {
+  try {
+    return new URL(value).searchParams.get('token') || '';
+  } catch {
+    const match = value.match(/[?&]token=([^&]+)/);
+    return match ? decodeURIComponent(match[1]) : value;
+  }
 }
 
 function buildProxySeedChains(
@@ -483,6 +575,16 @@ export function LinkExtract() {
   const [momoPermissionError, setMomoPermissionError] = useState<string | null>(null);
   const [momoPermissionSubmitting, setMomoPermissionSubmitting] = useState<Set<number>>(new Set());
   const [momoPermissionQueued, setMomoPermissionQueued] = useState<Set<number>>(new Set());
+  const [readyPlusChannel, setReadyPlusChannel] = useState<ReadyPlusChannel>('upi');
+  const [readyPlusApiKey, setReadyPlusApiKey] = useState('');
+  const [readyPlusKeySaved, setReadyPlusKeySaved] = useState(false);
+  const [readyPlusSessionInput, setReadyPlusSessionInput] = useState('');
+  const [readyPlusSubmitting, setReadyPlusSubmitting] = useState(false);
+  const [readyPlusPolling, setReadyPlusPolling] = useState(false);
+  const [readyPlusTask, setReadyPlusTask] = useState<ReadyPlusTaskSubmitResponse | null>(null);
+  const [readyPlusDetail, setReadyPlusDetail] = useState<ReadyPlusTaskDetailResponse | null>(null);
+  const [readyPlusError, setReadyPlusError] = useState<string | null>(null);
+  const [readyPlusDownloading, setReadyPlusDownloading] = useState<Set<string>>(new Set());
 
   const proxyChain = useMemo(
     () => buildProxyChain(proxyChainMode, manualRegions, paymentMethod),
@@ -505,6 +607,10 @@ export function LinkExtract() {
       checkout: saved.customProxyTexts?.checkout || saved.customProxyText || current.checkout,
     }));
     setCustomExportProxy(saved.customExportProxy || '');
+  }, []);
+
+  useEffect(() => {
+    setReadyPlusApiKey(localStorage.getItem(STORAGE_KEY_READY_PLUS_KEY) || '');
   }, []);
 
   const handlePaymentMethodChange = useCallback((value: PaymentMethod) => {
@@ -532,6 +638,15 @@ export function LinkExtract() {
   const accessTokenLineCount = accessTokenItems.length;
   const accessTokenTooMany = rawAccessTokenInputCount > 10 && !accessToken.trim().startsWith('{') && !accessToken.trim().startsWith('[');
   const canSubmit = accessTokenLineCount > 0 && !accessTokenTooMany && (proxySourceMode !== 'custom' || customProxyCount > 0);
+  const readyPlusParsed = useMemo(() => parseReadyPlusSessions(readyPlusSessionInput), [readyPlusSessionInput]);
+  const readyPlusItems = readyPlusDetail?.task.items || readyPlusTask?.accepted || [];
+  const readyPlusTaskStatus = readyPlusDetail?.task.status || readyPlusTask?.status || '';
+  const canSubmitReadyPlus =
+    Boolean(readyPlusApiKey.trim()) &&
+    readyPlusParsed.sessions.length > 0 &&
+    readyPlusParsed.sessions.length <= 20 &&
+    !readyPlusParsed.error &&
+    !readyPlusSubmitting;
   const fixedBillingCountry = paymentMethod === 'ideal' || paymentMethod === 'momo' || paymentMethod === 'kakao' || paymentMethod === 'card';
   const activePaymentMethod = PAYMENT_METHODS.find((item) => item.value === paymentMethod) || PAYMENT_METHODS[0];
   const goodProxyItems = useMemo(
@@ -579,6 +694,113 @@ export function LinkExtract() {
       submit,
     ],
   );
+
+  const refreshReadyPlusTask = useCallback(async (taskId: string) => {
+    const detail = await getReadyPlusTask(taskId, readyPlusApiKey);
+    setReadyPlusDetail(detail);
+    if (READY_PLUS_TASK_TERMINAL.has(detail.task.status)) {
+      setReadyPlusPolling(false);
+      playResultSound(resultAudioContextRef);
+    }
+    return detail;
+  }, [readyPlusApiKey]);
+
+  const handleSaveReadyPlusKey = useCallback(() => {
+    const value = readyPlusApiKey.trim();
+    if (value) {
+      localStorage.setItem(STORAGE_KEY_READY_PLUS_KEY, value);
+    } else {
+      localStorage.removeItem(STORAGE_KEY_READY_PLUS_KEY);
+    }
+    setReadyPlusKeySaved(true);
+    window.setTimeout(() => setReadyPlusKeySaved(false), 1600);
+  }, [readyPlusApiKey]);
+
+  const handleClearReadyPlusKey = useCallback(() => {
+    localStorage.removeItem(STORAGE_KEY_READY_PLUS_KEY);
+    setReadyPlusApiKey('');
+    setReadyPlusKeySaved(false);
+  }, []);
+
+  const handleReadyPlusSubmit = useCallback(async () => {
+    if (!canSubmitReadyPlus) return;
+    setReadyPlusSubmitting(true);
+    setReadyPlusError(null);
+    setReadyPlusTask(null);
+    setReadyPlusDetail(null);
+    setReadyPlusPolling(false);
+    try {
+      primeResultSound(resultAudioContextRef);
+      const response = await submitReadyPlusTask({
+        channel: readyPlusChannel,
+        api_key: readyPlusApiKey,
+        items: readyPlusParsed.sessions.map((session, index) => ({
+          client_ref: readyPlusClientRef(readyPlusChannel, index),
+          session_json: session,
+        })),
+      });
+      setReadyPlusTask(response);
+      if (response.task_id) {
+        setReadyPlusPolling(true);
+        await refreshReadyPlusTask(response.task_id);
+      }
+    } catch (e: unknown) {
+      setReadyPlusError(e instanceof Error ? e.message : '第三方 UPI 任务提交失败');
+    } finally {
+      setReadyPlusSubmitting(false);
+    }
+  }, [canSubmitReadyPlus, readyPlusApiKey, readyPlusChannel, readyPlusParsed.sessions, refreshReadyPlusTask]);
+
+  const handleReadyPlusRefresh = useCallback(async () => {
+    const taskId = readyPlusDetail?.task.task_id || readyPlusTask?.task_id;
+    if (!taskId) return;
+    setReadyPlusError(null);
+    try {
+      await refreshReadyPlusTask(taskId);
+    } catch (e: unknown) {
+      setReadyPlusError(e instanceof Error ? e.message : '第三方任务状态查询失败');
+    }
+  }, [readyPlusDetail?.task.task_id, readyPlusTask?.task_id, refreshReadyPlusTask]);
+
+  const handleReadyPlusDownload = useCallback(async (item: ReadyPlusTaskItem) => {
+    if (!item.order_id || item.status !== 'succeeded') return;
+    setReadyPlusDownloading((current) => new Set(current).add(item.order_id));
+    setReadyPlusError(null);
+    try {
+      const token = await getReadyPlusDownloadToken(item.order_id, readyPlusApiKey);
+      const downloadToken = readyPlusTokenFromUrl(token.url);
+      if (!downloadToken) throw new Error('下载令牌为空');
+      const blob = await downloadReadyPlusArtifact(item.order_id, downloadToken, readyPlusApiKey);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${item.order_id}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e: unknown) {
+      setReadyPlusError(e instanceof Error ? e.message : '获取下载令牌失败');
+    } finally {
+      setReadyPlusDownloading((current) => {
+        const next = new Set(current);
+        next.delete(item.order_id);
+        return next;
+      });
+    }
+  }, [readyPlusApiKey]);
+
+  useEffect(() => {
+    const taskId = readyPlusDetail?.task.task_id || readyPlusTask?.task_id;
+    if (!readyPlusPolling || !taskId) return undefined;
+    const timer = window.setInterval(() => {
+      void refreshReadyPlusTask(taskId).catch((e: unknown) => {
+        setReadyPlusError(e instanceof Error ? e.message : '第三方任务状态查询失败');
+        setReadyPlusPolling(false);
+      });
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [readyPlusDetail?.task.task_id, readyPlusPolling, readyPlusTask?.task_id, refreshReadyPlusTask]);
 
   const handleSaveProxy = useCallback(() => {
     const state: SavedProxyState = {
@@ -831,6 +1053,218 @@ export function LinkExtract() {
           <span className="rounded-full bg-gray-100 px-2.5 py-1 text-gray-700">{activePaymentMethod.route}</span>
           <span>{routeText(paymentMethod)}</span>
         </div>
+      </section>
+
+      <section className="rounded-lg border border-cyan-200 bg-cyan-50/60 p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 className="text-sm font-semibold text-cyan-950">第三方开通</h3>
+            <p className="mt-1 text-sm text-cyan-800">
+              后端调用 Ready Plus API 提交完整 ChatGPT Session JSON，并按所选渠道轮询异步任务状态。
+            </p>
+          </div>
+          {(readyPlusTask?.task_id || readyPlusDetail?.task.task_id) && (
+            <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${readyPlusStatusClass(readyPlusTaskStatus)}`}>
+              {readyPlusPolling ? '轮询中' : readyPlusStatusLabel(readyPlusTaskStatus)}
+            </span>
+          )}
+        </div>
+
+        <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-gray-700">完整 Session JSON</span>
+            <textarea
+              value={readyPlusSessionInput}
+              onChange={(event) => setReadyPlusSessionInput(event.target.value)}
+              rows={7}
+              placeholder={'粘贴 https://chatgpt.com/api/auth/session 返回的完整 JSON\n支持 JSON 数组，或一行一个 Session JSON / JSON 字符串'}
+              className="w-full resize-y rounded-lg border border-cyan-200 bg-white px-3 py-2 font-mono text-xs outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500"
+            />
+            <div className="mt-1.5 flex items-center justify-between text-xs">
+              <span className={readyPlusParsed.error ? 'text-rose-600' : 'text-gray-500'}>
+                {readyPlusParsed.error || '第三方接口每次最多 20 个 Session'}
+              </span>
+              <span className="text-gray-500">{readyPlusParsed.sessions.length}/20</span>
+            </div>
+          </label>
+
+          <div className="space-y-3">
+            <label className="block">
+              <span className="mb-1.5 block text-sm font-medium text-gray-700">第三方 API Key</span>
+              <input
+                type="password"
+                value={readyPlusApiKey}
+                onChange={(event) => setReadyPlusApiKey(event.target.value)}
+                placeholder="tg_..."
+                className="w-full rounded-lg border border-cyan-200 bg-white px-3 py-2 font-mono text-xs outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500"
+              />
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSaveReadyPlusKey}
+                  className="rounded-md border border-cyan-200 bg-white px-3 py-1.5 text-xs font-medium text-cyan-700 hover:bg-cyan-50"
+                >
+                  保存 Key
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearReadyPlusKey}
+                  className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-50"
+                >
+                  清除
+                </button>
+                {readyPlusKeySaved && <span className="text-xs text-emerald-700">已保存</span>}
+              </div>
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-sm font-medium text-gray-700">第三方渠道</span>
+              <select
+                value={readyPlusChannel}
+                onChange={(event) => {
+                  setReadyPlusChannel(event.target.value as ReadyPlusChannel);
+                  setReadyPlusTask(null);
+                  setReadyPlusDetail(null);
+                  setReadyPlusError(null);
+                  setReadyPlusPolling(false);
+                }}
+                className="w-full rounded-lg border border-cyan-200 bg-white px-3 py-2 text-sm outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500"
+              >
+                {READY_PLUS_CHANNELS.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label} · {item.price}
+                  </option>
+                ))}
+              </select>
+              <div className="mt-1.5 text-xs text-cyan-800">
+                {readyPlusChannelSummary(readyPlusChannel)}
+              </div>
+            </label>
+            <button
+              type="button"
+              onClick={() => void handleReadyPlusSubmit()}
+              disabled={!canSubmitReadyPlus}
+              className="h-11 w-full rounded-lg bg-cyan-700 text-sm font-semibold text-white hover:bg-cyan-800 disabled:cursor-not-allowed disabled:bg-gray-300"
+            >
+              {readyPlusSubmitting
+                ? '提交中...'
+                : readyPlusParsed.sessions.length > 1
+                  ? `提交 ${readyPlusParsed.sessions.length} 个 ${readyPlusChannelLabel(readyPlusChannel)} 任务`
+                  : `提交第三方 ${readyPlusChannelLabel(readyPlusChannel)} 任务`}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleReadyPlusRefresh()}
+              disabled={!readyPlusTask?.task_id && !readyPlusDetail?.task.task_id}
+              className="h-10 w-full rounded-lg border border-cyan-200 bg-white text-sm font-medium text-cyan-700 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-300"
+            >
+              手动刷新状态
+            </button>
+            <div className="rounded-md border border-cyan-100 bg-white/70 px-3 py-2 text-xs text-cyan-900">
+              Key 保存在当前浏览器本地；后端只在本次请求中转发，不落盘。
+            </div>
+            {!readyPlusApiKey.trim() && (
+              <div className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                请先填写并保存第三方 API Key。
+              </div>
+            )}
+          </div>
+        </div>
+
+        {readyPlusError && (
+          <div className="mt-3 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            {readyPlusError}
+          </div>
+        )}
+
+        {(readyPlusTask || readyPlusDetail) && (
+          <div className="mt-4 space-y-3">
+            <div className="grid gap-3 md:grid-cols-5">
+              <div className="rounded-md border border-cyan-100 bg-white px-3 py-2">
+                <div className="text-xs text-gray-500">渠道</div>
+                <div className="mt-1 text-sm font-semibold text-gray-900">
+                  {readyPlusChannelLabel(readyPlusDetail?.task.channel || readyPlusChannel)}
+                </div>
+              </div>
+              <div className="rounded-md border border-cyan-100 bg-white px-3 py-2">
+                <div className="text-xs text-gray-500">Task ID</div>
+                <div className="mt-1 truncate font-mono text-xs text-gray-800">
+                  {readyPlusDetail?.task.task_id || readyPlusTask?.task_id || '-'}
+                </div>
+              </div>
+              <div className="rounded-md border border-cyan-100 bg-white px-3 py-2">
+                <div className="text-xs text-gray-500">状态</div>
+                <div className="mt-1 text-sm font-semibold text-gray-900">
+                  {readyPlusStatusLabel(readyPlusTaskStatus)}
+                </div>
+              </div>
+              <div className="rounded-md border border-cyan-100 bg-white px-3 py-2">
+                <div className="text-xs text-gray-500">成功 / 失败</div>
+                <div className="mt-1 text-sm font-semibold text-gray-900">
+                  {readyPlusDetail ? `${readyPlusDetail.task.succeeded_count} / ${readyPlusDetail.task.failed_count}` : '-'}
+                </div>
+              </div>
+              <div className="rounded-md border border-cyan-100 bg-white px-3 py-2">
+                <div className="text-xs text-gray-500">可用余额</div>
+                <div className="mt-1 text-sm font-semibold text-gray-900">
+                  {readyPlusTask?.balance || '-'}
+                </div>
+              </div>
+            </div>
+
+            {readyPlusTask?.rejected.length ? (
+              <div className="rounded-md border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                拒绝 {readyPlusTask.rejected.length} 项：
+                {readyPlusTask.rejected.map((item) => ` ${item.client_ref}=${item.reason}`).join('；')}
+              </div>
+            ) : null}
+
+            {readyPlusItems.length > 0 && (
+              <div className="overflow-auto rounded-md border border-cyan-100 bg-white">
+                <table className="w-full min-w-[760px] text-left text-xs">
+                  <thead className="bg-cyan-50 text-cyan-900">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">Client Ref</th>
+                      <th className="px-3 py-2 font-medium">Order ID</th>
+                      <th className="px-3 py-2 font-medium">渠道</th>
+                      <th className="px-3 py-2 font-medium">状态</th>
+                      <th className="px-3 py-2 font-medium">大厅状态</th>
+                      <th className="px-3 py-2 font-medium">扣费</th>
+                      <th className="px-3 py-2 font-medium">错误码</th>
+                      <th className="px-3 py-2 font-medium">交付</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {readyPlusItems.map((item) => (
+                      <tr key={`${item.client_ref}-${item.order_id}`} className="border-t border-cyan-50">
+                        <td className="px-3 py-2 font-mono text-gray-700">{item.client_ref}</td>
+                        <td className="px-3 py-2 font-mono text-gray-600">{item.order_id || '-'}</td>
+                        <td className="px-3 py-2 text-gray-700">{readyPlusChannelLabel(item.channel)}</td>
+                        <td className="px-3 py-2">
+                          <span className={`rounded-full border px-2 py-1 font-medium ${readyPlusStatusClass(item.status)}`}>
+                            {readyPlusStatusLabel(item.status)}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-gray-600">{item.provider_status || '-'}</td>
+                        <td className="px-3 py-2 font-mono text-gray-600">{item.charged || '0'}</td>
+                        <td className="px-3 py-2 font-mono text-rose-600">{item.error_code || '-'}</td>
+                        <td className="px-3 py-2">
+                          <button
+                            type="button"
+                            onClick={() => void handleReadyPlusDownload(item)}
+                            disabled={item.status !== 'succeeded' || readyPlusDownloading.has(item.order_id)}
+                            className="rounded-md border border-cyan-200 px-2.5 py-1 text-xs font-medium text-cyan-700 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-300"
+                          >
+                            {readyPlusDownloading.has(item.order_id) ? '获取中...' : '下载 ZIP'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
       {paymentMethod === 'momo' && (

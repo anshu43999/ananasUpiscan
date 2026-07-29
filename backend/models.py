@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 
 JobStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
 LogLevel = Literal["info", "warn", "error"]
+ReadyPlusChannel = Literal["upi", "kakao"]
 
 
 def utc_now() -> datetime:
@@ -67,6 +68,43 @@ class ProxyChainTestResult(BaseModel):
     success: bool
     latency_ms: int | None = None
     error: str | None = None
+
+
+class ReadyPlusTaskSubmitItem(BaseModel):
+    client_ref: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9._:-]+$")
+    session_json: Any
+
+
+class ReadyPlusTaskSubmitRequest(BaseModel):
+    channel: ReadyPlusChannel = "upi"
+    items: list[ReadyPlusTaskSubmitItem] = Field(min_length=1, max_length=20)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+
+    @field_validator("channel", mode="before")
+    @classmethod
+    def normalize_channel(cls, value: Any) -> str:
+        return str(value or "upi").strip().lower()
+
+
+class ReadyPlusTaskSubmitResponse(BaseModel):
+    ok: bool
+    task_id: str | None = None
+    status: str | None = None
+    accepted: list[dict[str, Any]] = Field(default_factory=list)
+    rejected: list[dict[str, Any]] = Field(default_factory=list)
+    balance: str | None = None
+    idempotent_replay: bool = False
+
+
+class ReadyPlusTaskDetailResponse(BaseModel):
+    ok: bool
+    task: dict[str, Any]
+
+
+class ReadyPlusDownloadTokenResponse(BaseModel):
+    ok: bool
+    url: str
+    expires_at: int
 
 
 class MomoPermissionCheckRequest(BaseModel):
