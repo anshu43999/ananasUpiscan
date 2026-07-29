@@ -1055,22 +1055,51 @@ export function LinkExtract() {
         </div>
       </section>
 
-      <section className="rounded-lg border border-cyan-200 bg-cyan-50/60 p-5 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-4">
+      <details className="group rounded-lg border border-cyan-200 bg-cyan-50/60 shadow-sm">
+        <summary className="flex cursor-pointer list-none flex-wrap items-start justify-between gap-4 p-5">
           <div>
             <h3 className="text-sm font-semibold text-cyan-950">第三方开通</h3>
             <p className="mt-1 text-sm text-cyan-800">
-              后端调用 Ready Plus API 提交完整 ChatGPT Session JSON，并按所选渠道轮询异步任务状态。
+              独立 Ready Plus 链路；本地提链不需要第三方 API Key。
             </p>
           </div>
-          {(readyPlusTask?.task_id || readyPlusDetail?.task.task_id) && (
-            <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${readyPlusStatusClass(readyPlusTaskStatus)}`}>
-              {readyPlusPolling ? '轮询中' : readyPlusStatusLabel(readyPlusTaskStatus)}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full border border-cyan-200 bg-white px-3 py-1 text-xs font-semibold text-cyan-800">
+              UPI · 1.2 USDT
             </span>
-          )}
-        </div>
+            <span className="rounded-full border border-cyan-200 bg-white px-3 py-1 text-xs font-semibold text-cyan-800">
+              Kakao · 1 USDT
+            </span>
+            {(readyPlusTask?.task_id || readyPlusDetail?.task.task_id) && (
+              <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${readyPlusStatusClass(readyPlusTaskStatus)}`}>
+                {readyPlusPolling ? '轮询中' : readyPlusStatusLabel(readyPlusTaskStatus)}
+              </span>
+            )}
+            <span className="text-xs font-medium text-cyan-700 group-open:hidden">展开</span>
+            <span className="hidden text-xs font-medium text-cyan-700 group-open:inline">收起</span>
+          </div>
+        </summary>
 
-        <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
+        <div className="border-t border-cyan-100 p-5">
+          <div className="mb-4 rounded-md border border-cyan-100 bg-white/80 px-3 py-2 text-xs text-cyan-900">
+            第三方开通只调用 Ready Plus 的 UPI / Kakao 开通接口；下面的 UPI、iDEAL、MoMo、Kakao、直卡本地提链继续按原来的 Access Token 和代理逻辑执行。
+          </div>
+
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-semibold text-cyan-950">Ready Plus 任务</h3>
+              <p className="mt-1 text-sm text-cyan-800">
+                提交完整 ChatGPT Session JSON，并按所选渠道轮询异步任务状态。
+              </p>
+            </div>
+            {(readyPlusTask?.task_id || readyPlusDetail?.task.task_id) && (
+              <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${readyPlusStatusClass(readyPlusTaskStatus)}`}>
+                {readyPlusPolling ? '轮询中' : readyPlusStatusLabel(readyPlusTaskStatus)}
+              </span>
+            )}
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-gray-700">完整 Session JSON</span>
             <textarea
@@ -1265,7 +1294,8 @@ export function LinkExtract() {
             )}
           </div>
         )}
-      </section>
+        </div>
+      </details>
 
       {paymentMethod === 'momo' && (
         <section className="rounded-lg border border-amber-200 bg-amber-50/70 p-5 shadow-sm">
