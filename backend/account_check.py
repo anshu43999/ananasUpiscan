@@ -445,14 +445,22 @@ def _run_third_party_eligibility_check(identity: TokenIdentity, promo_id: str) -
         }
 
     token_ok = payload.get("token_ok")
-    eligible = bool(payload.get("eligible"))
-    reason = _clean_str(payload.get("reason"))
+    coupon_eligible = bool(payload.get("eligible"))
+    channel_values = [
+        payload.get(key)
+        for key in ("upi_eligible", "gcash_eligible", "ideal_eligible")
+        if isinstance(payload.get(key), bool)
+    ]
+    payment_eligible = any(channel_values) if channel_values else coupon_eligible
+    reason = None if payment_eligible else _clean_str(payload.get("reason"))
     return {
         "ok": token_ok is not False,
         "status": _safe_int(payload.get("status"), response.status_code),
-        "eligible": eligible,
+        "eligible": payment_eligible,
         "reason": reason,
         "coupon_state": _clean_str(payload.get("coupon_state")),
+        "coupon_eligible": coupon_eligible,
+        "coupon_reason": _clean_str(payload.get("reason")),
         "promo_id": _clean_str(payload.get("promo_id")) or promo_id,
         "token_ok": bool(token_ok),
         "email": _clean_str(payload.get("email")),
@@ -464,11 +472,11 @@ def _run_third_party_eligibility_check(identity: TokenIdentity, promo_id: str) -
         "jwt_expired": bool(payload.get("jwt_expired")),
         "jwt_exp_ms": payload.get("jwt_exp_ms") if isinstance(payload.get("jwt_exp_ms"), int) else None,
         "jwt_exp_in_sec": payload.get("jwt_exp_in_sec") if isinstance(payload.get("jwt_exp_in_sec"), int) else None,
-        "upi_eligible": payload.get("upi_eligible") if isinstance(payload.get("upi_eligible"), bool) else eligible,
+        "upi_eligible": payload.get("upi_eligible") if isinstance(payload.get("upi_eligible"), bool) else payment_eligible,
         "upi_eligible_reason": _clean_str(payload.get("upi_eligible_reason")),
-        "gcash_eligible": payload.get("gcash_eligible") if isinstance(payload.get("gcash_eligible"), bool) else eligible,
+        "gcash_eligible": payload.get("gcash_eligible") if isinstance(payload.get("gcash_eligible"), bool) else payment_eligible,
         "gcash_eligible_reason": _clean_str(payload.get("gcash_eligible_reason")),
-        "ideal_eligible": payload.get("ideal_eligible") if isinstance(payload.get("ideal_eligible"), bool) else eligible,
+        "ideal_eligible": payload.get("ideal_eligible") if isinstance(payload.get("ideal_eligible"), bool) else payment_eligible,
         "ideal_eligible_reason": _clean_str(payload.get("ideal_eligible_reason")),
         "error": _clean_str(payload.get("error")),
         "source": "third_party",
@@ -540,7 +548,7 @@ def check_account_eligibility(token: str, promo_id: str = "plus-1-month-free") -
         else _run_third_party_eligibility_check(identity, promo_id)
     )
     eligible = bool(probe.get("eligible"))
-    reason = _clean_str(probe.get("reason"))
+    reason = None if eligible else _clean_str(probe.get("reason"))
     result.update(
         {
             "token_ok": bool(probe.get("token_ok", result.get("token_ok"))),

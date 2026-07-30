@@ -141,6 +141,13 @@ def row_to_detail(row: sqlite3.Row) -> dict[str, Any]:
     return item
 
 
+def strip_account_secrets(item: dict[str, Any]) -> dict[str, Any]:
+    item.pop("access_token", None)
+    item.pop("password", None)
+    item.pop("session_json", None)
+    return item
+
+
 def _session_json(raw: str) -> dict[str, Any]:
     text = str(raw or "").strip()
     if not text.startswith("{"):
@@ -426,7 +433,7 @@ def check_accounts(ids: list[int], promo_id: str = "plus-1-month-free", concurre
             detail = get_account(account_id)
             if detail:
                 detail["check_result"] = results[account_id]
-                items.append(detail)
+                items.append(strip_account_secrets(detail))
     return {"ok": True, "checked": len(items), "items": items}
 
 
@@ -546,7 +553,7 @@ def check_health(ids: list[int], concurrency: int = 8) -> dict[str, Any]:
         detail = get_account(account_id)
         if detail:
             detail["health_result"] = results[account_id]
-            items.append(detail)
+            items.append(strip_account_secrets(detail))
     return {"ok": all(bool(result.get("ok")) for result in results.values()), "checked": len(items), "counts": counts, "items": items}
 
 
