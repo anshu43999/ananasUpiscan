@@ -8,10 +8,11 @@ import requests
 
 
 class ReadyPlusApiError(RuntimeError):
-    def __init__(self, status_code: int, payload: Any, message: str) -> None:
+    def __init__(self, status_code: int, payload: Any, message: str, retry_after: str | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.payload = payload
+        self.retry_after = retry_after
 
 
 def _api_base() -> str:
@@ -77,7 +78,12 @@ def ready_plus_json(
         payload = {"ok": False, "error": {"code": "ready_plus_invalid_response", "message": response.text[:500]}}
 
     if response.status_code >= 400:
-        raise ReadyPlusApiError(response.status_code, payload, _error_message(payload, f"Ready Plus request failed ({response.status_code})"))
+        raise ReadyPlusApiError(
+            response.status_code,
+            payload,
+            _error_message(payload, f"Ready Plus request failed ({response.status_code})"),
+            response.headers.get("Retry-After"),
+        )
     return payload
 
 
@@ -99,5 +105,10 @@ def ready_plus_download(item_id: str, token: str, api_key: str | None = None) ->
         except ValueError:
             payload = {"ok": False, "error": {"code": "ready_plus_download_failed", "message": response.text[:500]}}
         response.close()
-        raise ReadyPlusApiError(response.status_code, payload, _error_message(payload, f"Ready Plus download failed ({response.status_code})"))
+        raise ReadyPlusApiError(
+            response.status_code,
+            payload,
+            _error_message(payload, f"Ready Plus download failed ({response.status_code})"),
+            response.headers.get("Retry-After"),
+        )
     return response

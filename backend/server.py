@@ -5,7 +5,7 @@ import os
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -91,7 +91,8 @@ async def proxy_chain_test() -> ProxyChainTestResult:
 
 def _ready_plus_error(exc: Exception) -> HTTPException:
     if isinstance(exc, ReadyPlusApiError):
-        return HTTPException(status_code=exc.status_code, detail=exc.payload)
+        headers = {"Retry-After": exc.retry_after} if exc.retry_after else None
+        return HTTPException(status_code=exc.status_code, detail=exc.payload, headers=headers)
     return HTTPException(
         status_code=503,
         detail={"ok": False, "error": {"code": "ready_plus_unconfigured", "message": str(exc)}},
@@ -110,6 +111,17 @@ async def ready_plus_me(x_ready_plus_key: str | None = Header(default=None, alia
 async def ready_plus_balance(x_ready_plus_key: str | None = Header(default=None, alias="X-Ready-Plus-Key")) -> dict[str, object]:
     try:
         return await asyncio.to_thread(ready_plus_json, "GET", "/api/v1/balance", api_key=x_ready_plus_key)
+    except Exception as exc:
+        raise _ready_plus_error(exc) from exc
+
+
+@app.get("/api/ready-plus/tasks")
+async def ready_plus_tasks(
+    limit: int = Query(default=20, ge=1, le=100),
+    x_ready_plus_key: str | None = Header(default=None, alias="X-Ready-Plus-Key"),
+) -> dict[str, object]:
+    try:
+        return await asyncio.to_thread(ready_plus_json, "GET", "/api/v1/tasks", params={"limit": limit}, api_key=x_ready_plus_key)
     except Exception as exc:
         raise _ready_plus_error(exc) from exc
 

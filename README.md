@@ -34,6 +34,7 @@ endpoints instead:
 
 ```text
 POST /api/ready-plus/tasks
+GET  /api/ready-plus/tasks?limit=20
 GET  /api/ready-plus/tasks/{task_id}
 GET  /api/ready-plus/items/{item_id}/download-token
 GET  /api/ready-plus/items/{item_id}/download?token=...
@@ -46,6 +47,27 @@ https://chatgpt.com/api/auth/session
 ```
 
 One third-party submit request supports 1-20 Session JSON items.
+
+Before submitting either UPI or Kakao, set and verify a working password in the
+target ChatGPT account settings. Do not submit account passwords or 2FA OTPs to
+the API. The correct Ready Plus order is:
+
+```text
+set ChatGPT password -> submit complete Session JSON -> Ready Plus handles 2FA/package flow
+```
+
+Kakao accepts valid email accounts and recommends Gmail or iCloud. A missing
+email or conflicting email fields in the Session JSON may be rejected with:
+
+```text
+api_kakao_email_required
+```
+
+The frontend generates an `Idempotency-Key` for each Ready Plus submission and
+keeps it visible. If a network timeout leaves the result unknown, retry with the
+same request body and same key. Use `New submit key` only for a genuinely new
+task. When Ready Plus returns `Retry-After`, the UI includes the suggested retry
+delay in the error message.
 
 ## Docker
 

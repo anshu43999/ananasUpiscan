@@ -7,6 +7,7 @@ import {
   downloadReadyPlusArtifact,
   getReadyPlusDownloadToken,
   getReadyPlusTask,
+  listReadyPlusTasks,
   submitReadyPlusTask,
   testProxyChain,
   type ExtractJobResponse,
@@ -17,6 +18,7 @@ import {
   type ReadyPlusChannel,
   type ReadyPlusTaskDetailResponse,
   type ReadyPlusTaskItem,
+  type ReadyPlusTaskSummary,
   type ReadyPlusTaskSubmitResponse,
   type StartExtractOptions,
 } from '../api/extract';
@@ -273,12 +275,28 @@ function readyPlusClientRef(channel: ReadyPlusChannel, index: number): string {
   return `rp-${channel}-${Date.now()}-${String(index + 1).padStart(2, '0')}`;
 }
 
+function generateReadyPlusIdempotencyKey(channel: ReadyPlusChannel): string {
+  const random = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID().replace(/-/g, '')
+    : Math.random().toString(36).slice(2);
+  return `upiscan-${channel}-${Date.now()}-${random}`.slice(0, 128);
+}
+
 function readyPlusTokenFromUrl(value: string): string {
   try {
     return new URL(value).searchParams.get('token') || '';
   } catch {
     const match = value.match(/[?&]token=([^&]+)/);
     return match ? decodeURIComponent(match[1]) : value;
+  }
+}
+
+function compactReadyPlusResult(value: unknown): string {
+  if (!value || typeof value !== 'object') return '-';
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
   }
 }
 
@@ -581,12 +599,16 @@ export function LinkExtract() {
   const [readyPlusApiKey, setReadyPlusApiKey] = useState('');
   const [readyPlusKeySaved, setReadyPlusKeySaved] = useState(false);
   const [readyPlusSessionInput, setReadyPlusSessionInput] = useState('');
+  const [readyPlusIdempotencyKey, setReadyPlusIdempotencyKey] = useState('');
   const [readyPlusSubmitting, setReadyPlusSubmitting] = useState(false);
   const [readyPlusPolling, setReadyPlusPolling] = useState(false);
   const [readyPlusTask, setReadyPlusTask] = useState<ReadyPlusTaskSubmitResponse | null>(null);
   const [readyPlusDetail, setReadyPlusDetail] = useState<ReadyPlusTaskDetailResponse | null>(null);
   const [readyPlusError, setReadyPlusError] = useState<string | null>(null);
   const [readyPlusDownloading, setReadyPlusDownloading] = useState<Set<string>>(new Set());
+  const [readyPlusRecentTasks, setReadyPlusRecentTasks] = useState<ReadyPlusTaskSummary[]>([]);
+  const [readyPlusRecentLoading, setReadyPlusRecentLoading] = useState(false);
+  const [readyPlusRecentError, setReadyPlusRecentError] = useState<string | null>(null);
 
   const proxyChain = useMemo(
     () => buildProxyChain(proxyChainMode, manualRegions, paymentMethod),
@@ -724,6 +746,27 @@ export function LinkExtract() {
     setReadyPlusKeySaved(false);
   }, []);
 
+  const handleNewReadyPlusIdempotencyKey = useCallback(() => {
+    setReadyPlusIdempotencyKey(generateReadyPlusIdempotencyKey(readyPlusChannel));
+  }, [readyPlusChannel]);
+
+  const handleReadyPlusRecentTasks = useCallback(async () => {
+    if (!readyPlusApiKey.trim()) {
+      setReadyPlusRecentError('请先填写第三方 API Key。');
+      return;
+    }
+    setReadyPlusRecentLoading(true);
+    setReadyPlusRecentError(null);
+    try {
+      const result = await listReadyPlusTasks(readyPlusApiKey, 20);
+      setReadyPlusRecentTasks(result.tasks || []);
+    } catch (e: unknown) {
+      setReadyPlusRecentError(e instanceof Error ? e.message : '最近任务读取失败');
+    } finally {
+      setReadyPlusRecentLoading(false);
+    }
+  }, [readyPlusApiKey]);
+
   const handleReadyPlusSubmit = useCallback(async () => {
     if (!canSubmitReadyPlus) return;
     setReadyPlusSubmitting(true);
@@ -733,9 +776,12 @@ export function LinkExtract() {
     setReadyPlusPolling(false);
     try {
       primeResultSound(resultAudioContextRef);
+      const idempotencyKey = readyPlusIdempotencyKey || generateReadyPlusIdempotencyKey(readyPlusChannel);
+      if (!readyPlusIdempotencyKey) setReadyPlusIdempotencyKey(idempotencyKey);
       const response = await submitReadyPlusTask({
         channel: readyPlusChannel,
         api_key: readyPlusApiKey,
+        idempotency_key: idempotencyKey,
         items: readyPlusParsed.sessions.map((session, index) => ({
           client_ref: readyPlusClientRef(readyPlusChannel, index),
           session_json: session,
@@ -751,7 +797,7 @@ export function LinkExtract() {
     } finally {
       setReadyPlusSubmitting(false);
     }
-  }, [canSubmitReadyPlus, readyPlusApiKey, readyPlusChannel, readyPlusParsed.sessions, refreshReadyPlusTask]);
+  }, [canSubmitReadyPlus, readyPlusApiKey, readyPlusChannel, readyPlusIdempotencyKey, readyPlusParsed.sessions, refreshReadyPlusTask]);
 
   const handleReadyPlusRefresh = useCallback(async () => {
     const taskId = readyPlusDetail?.task.task_id || readyPlusTask?.task_id;
@@ -1117,6 +1163,14 @@ export function LinkExtract() {
           <div className="mb-4 rounded-md border border-cyan-100 bg-white/80 px-3 py-2 text-xs text-cyan-900">
             第三方开通只调用 Ready Plus 的 UPI / Kakao 开通接口；本地 UPI、iDEAL、MoMo、Kakao、直卡提链请切回“本地提链”Tab。
           </div>
+          <div className="mb-4 grid gap-3 lg:grid-cols-2">
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              提交前必须先在 ChatGPT 账号设置中设置并确认可用密码；2FA 不能替代密码，Session JSON 中也不要包含密码或 2FA OTP。
+            </div>
+            <div className="rounded-md border border-cyan-100 bg-white/80 px-3 py-2 text-xs text-cyan-900">
+              Kakao 接受有效邮箱，推荐 Gmail 或 iCloud；缺少邮箱或邮箱字段冲突会返回 api_kakao_email_required。
+            </div>
+          </div>
 
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
@@ -1137,7 +1191,10 @@ export function LinkExtract() {
             <span className="mb-1.5 block text-sm font-medium text-gray-700">完整 Session JSON</span>
             <textarea
               value={readyPlusSessionInput}
-              onChange={(event) => setReadyPlusSessionInput(event.target.value)}
+              onChange={(event) => {
+                setReadyPlusSessionInput(event.target.value);
+                setReadyPlusIdempotencyKey('');
+              }}
               rows={7}
               placeholder={'粘贴 https://chatgpt.com/api/auth/session 返回的完整 JSON\n支持 JSON 数组，或一行一个 Session JSON / JSON 字符串'}
               className="w-full resize-y rounded-lg border border-cyan-200 bg-white px-3 py-2 font-mono text-xs outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500"
@@ -1188,6 +1245,7 @@ export function LinkExtract() {
                   setReadyPlusDetail(null);
                   setReadyPlusError(null);
                   setReadyPlusPolling(false);
+                  setReadyPlusIdempotencyKey('');
                 }}
                 className="w-full rounded-lg border border-cyan-200 bg-white px-3 py-2 text-sm outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500"
               >
@@ -1200,6 +1258,22 @@ export function LinkExtract() {
               <div className="mt-1.5 text-xs text-cyan-800">
                 {readyPlusChannelSummary(readyPlusChannel)}
               </div>
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-sm font-medium text-gray-700">提交幂等 Key</span>
+              <input
+                value={readyPlusIdempotencyKey}
+                onChange={(event) => setReadyPlusIdempotencyKey(event.target.value)}
+                placeholder="自动生成；失败重试时复用"
+                className="w-full rounded-lg border border-cyan-200 bg-white px-3 py-2 font-mono text-xs outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500"
+              />
+              <button
+                type="button"
+                onClick={handleNewReadyPlusIdempotencyKey}
+                className="mt-2 rounded-md border border-cyan-200 bg-white px-3 py-1.5 text-xs font-medium text-cyan-700 hover:bg-cyan-50"
+              >
+                新建提交 Key
+              </button>
             </label>
             <button
               type="button"
@@ -1221,6 +1295,14 @@ export function LinkExtract() {
             >
               手动刷新状态
             </button>
+            <button
+              type="button"
+              onClick={() => void handleReadyPlusRecentTasks()}
+              disabled={readyPlusRecentLoading || !readyPlusApiKey.trim()}
+              className="h-10 w-full rounded-lg border border-cyan-200 bg-white text-sm font-medium text-cyan-700 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-300"
+            >
+              {readyPlusRecentLoading ? '读取中...' : '读取最近任务'}
+            </button>
             <div className="rounded-md border border-cyan-100 bg-white/70 px-3 py-2 text-xs text-cyan-900">
               Key 保存在当前浏览器本地；后端只在本次请求中转发，不落盘。
             </div>
@@ -1235,6 +1317,57 @@ export function LinkExtract() {
         {readyPlusError && (
           <div className="mt-3 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">
             {readyPlusError}
+          </div>
+        )}
+
+        {readyPlusRecentError && (
+          <div className="mt-3 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            {readyPlusRecentError}
+          </div>
+        )}
+
+        {readyPlusRecentTasks.length > 0 && (
+          <div className="mt-4 overflow-auto rounded-md border border-cyan-100 bg-white">
+            <table className="w-full min-w-[720px] text-left text-xs">
+              <thead className="bg-cyan-50 text-cyan-900">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Task ID</th>
+                  <th className="px-3 py-2 font-medium">渠道</th>
+                  <th className="px-3 py-2 font-medium">状态</th>
+                  <th className="px-3 py-2 font-medium">请求 / 成功 / 失败</th>
+                  <th className="px-3 py-2 font-medium">更新时间</th>
+                  <th className="px-3 py-2 font-medium">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {readyPlusRecentTasks.map((task) => (
+                  <tr key={task.task_id} className="border-t border-cyan-50">
+                    <td className="px-3 py-2 font-mono text-gray-700">{task.task_id}</td>
+                    <td className="px-3 py-2 text-gray-700">{readyPlusChannelLabel(task.channel)}</td>
+                    <td className="px-3 py-2">
+                      <span className={`rounded-full border px-2 py-1 font-medium ${readyPlusStatusClass(task.status)}`}>
+                        {readyPlusStatusLabel(task.status)}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 font-mono text-gray-600">
+                      {task.requested_count} / {task.succeeded_count} / {task.failed_count}
+                    </td>
+                    <td className="px-3 py-2 text-gray-600">
+                      {task.updated_at ? new Date(task.updated_at).toLocaleString() : '-'}
+                    </td>
+                    <td className="px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => void refreshReadyPlusTask(task.task_id)}
+                        className="rounded-md border border-cyan-200 px-2.5 py-1 text-xs font-medium text-cyan-700 hover:bg-cyan-50"
+                      >
+                        查看详情
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
 
@@ -1282,7 +1415,7 @@ export function LinkExtract() {
 
             {readyPlusItems.length > 0 && (
               <div className="overflow-auto rounded-md border border-cyan-100 bg-white">
-                <table className="w-full min-w-[760px] text-left text-xs">
+                <table className="w-full min-w-[900px] text-left text-xs">
                   <thead className="bg-cyan-50 text-cyan-900">
                     <tr>
                       <th className="px-3 py-2 font-medium">Client Ref</th>
@@ -1292,6 +1425,7 @@ export function LinkExtract() {
                       <th className="px-3 py-2 font-medium">大厅状态</th>
                       <th className="px-3 py-2 font-medium">扣费</th>
                       <th className="px-3 py-2 font-medium">错误码</th>
+                      <th className="px-3 py-2 font-medium">结果摘要</th>
                       <th className="px-3 py-2 font-medium">交付</th>
                     </tr>
                   </thead>
@@ -1309,6 +1443,9 @@ export function LinkExtract() {
                         <td className="px-3 py-2 text-gray-600">{item.provider_status || '-'}</td>
                         <td className="px-3 py-2 font-mono text-gray-600">{item.charged || '0'}</td>
                         <td className="px-3 py-2 font-mono text-rose-600">{item.error_code || '-'}</td>
+                        <td className="max-w-64 truncate px-3 py-2 font-mono text-gray-600" title={compactReadyPlusResult(item.result)}>
+                          {compactReadyPlusResult(item.result)}
+                        </td>
                         <td className="px-3 py-2">
                           <button
                             type="button"

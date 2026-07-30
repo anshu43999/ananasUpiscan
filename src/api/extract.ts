@@ -14,6 +14,7 @@ async function extractFetch<T>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
+    const retryAfter = res.headers.get('Retry-After');
     const detail = (body as { detail?: unknown }).detail;
     const detailMessage =
       typeof detail === 'string'
@@ -28,7 +29,7 @@ async function extractFetch<T>(
       (body as { message?: string }).message ||
       (body as { error?: string }).error ||
       `Request failed (${res.status})`;
-    throw new Error(message);
+    throw new Error(retryAfter ? `${message}；建议 ${retryAfter} 秒后重试` : message);
   }
 
   return res.json() as Promise<T>;
@@ -199,6 +200,26 @@ export interface ReadyPlusTaskDetail {
   items: ReadyPlusTaskItem[];
 }
 
+export interface ReadyPlusTaskSummary {
+  task_id: string;
+  channel: ReadyPlusChannel | string;
+  source: string;
+  status: string;
+  requested_count: number;
+  accepted_count: number;
+  rejected_count: number;
+  succeeded_count: number;
+  failed_count: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+  completed_at?: string | null;
+}
+
+export interface ReadyPlusTaskListResponse {
+  ok: boolean;
+  tasks: ReadyPlusTaskSummary[];
+}
+
 export interface ReadyPlusTaskDetailResponse {
   ok: boolean;
   task: ReadyPlusTaskDetail;
@@ -232,6 +253,12 @@ export function getReadyPlusTask(taskId: string, apiKey?: string): Promise<Ready
   });
 }
 
+export function listReadyPlusTasks(apiKey?: string, limit = 20): Promise<ReadyPlusTaskListResponse> {
+  return extractFetch(`/api/ready-plus/tasks?limit=${encodeURIComponent(String(limit))}`, {
+    headers: readyPlusAuthHeaders(apiKey),
+  });
+}
+
 export function getReadyPlusDownloadToken(itemId: string, apiKey?: string): Promise<ReadyPlusDownloadTokenResponse> {
   return extractFetch(`/api/ready-plus/items/${itemId}/download-token`, {
     headers: readyPlusAuthHeaders(apiKey),
@@ -248,8 +275,10 @@ export async function downloadReadyPlusArtifact(itemId: string, token: string, a
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
+    const retryAfter = res.headers.get('Retry-After');
     const detail = (body as { detail?: { error?: { message?: string; code?: string } } }).detail;
-    throw new Error(detail?.error?.message || detail?.error?.code || `Download failed (${res.status})`);
+    const message = detail?.error?.message || detail?.error?.code || `Download failed (${res.status})`;
+    throw new Error(retryAfter ? `${message}；建议 ${retryAfter} 秒后重试` : message);
   }
 
   return res.blob();
