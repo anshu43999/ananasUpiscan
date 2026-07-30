@@ -12,9 +12,10 @@ import {
   type AccountLibraryItem,
   type AccountLibraryStatsResponse,
 } from '../api/extract';
+import type { PaymentMethod } from './LinkExtract';
 
 type AccountLibraryProps = {
-  onUseTokens: (tokens: string) => void;
+  onUseTokens: (tokens: string, paymentMethod?: PaymentMethod) => void;
 };
 
 type StatusFilter = 'active' | 'archived' | 'all';
@@ -54,6 +55,14 @@ const healthClasses: Record<string, string> = {
   unknown: 'border-gray-200 bg-gray-50 text-gray-600',
 };
 
+const QUICK_EXTRACT_METHODS: Array<{ value: PaymentMethod; label: string }> = [
+  { value: 'upi', label: 'UPI' },
+  { value: 'ideal', label: 'iDEAL' },
+  { value: 'momo', label: 'MoMo' },
+  { value: 'kakao', label: 'Kakao' },
+  { value: 'card', label: '直卡' },
+];
+
 function formatTime(value?: string | null): string {
   if (!value) return '-';
   const date = new Date(value);
@@ -80,7 +89,6 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
   const [status, setStatus] = useState<StatusFilter>('active');
   const [eligibility, setEligibility] = useState<EligibilityFilter>('');
   const [importText, setImportText] = useState('');
-  const [defaultChannel, setDefaultChannel] = useState('upi');
   const [loading, setLoading] = useState(false);
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -139,12 +147,12 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
       return;
     }
     await runAction(async () => {
-      const result = await importAccounts(importText, defaultChannel);
+      const result = await importAccounts(importText);
       setImportText('');
       await loadData();
       return `已导入/更新 ${result.imported} 个账号`;
     });
-  }, [defaultChannel, importText, loadData, runAction]);
+  }, [importText, loadData, runAction]);
 
   const handleExportTokens = useCallback(async (useEligibleOnly: boolean, fillExtract: boolean) => {
     await runAction(async () => {
@@ -166,6 +174,19 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
       return `已复制 ${result.count} 个账号 JSON 摘要`;
     });
   }, [runAction, selectedIdList]);
+
+  const handleQuickExtract = useCallback(async (account: AccountLibraryItem, paymentMethod: PaymentMethod) => {
+    if (!account.has_access_token) {
+      setError('这个账号没有 Access Token，无法加入提取。');
+      return;
+    }
+    await runAction(async () => {
+      const result = await exportAccountTokens([account.id], false);
+      if (!result.text.trim()) return '这个账号没有可用 Access Token';
+      onUseTokens(result.text, paymentMethod);
+      return `已将 ${accountTitle(account)} 加入 ${QUICK_EXTRACT_METHODS.find((item) => item.value === paymentMethod)?.label || paymentMethod} 提炼`;
+    });
+  }, [onUseTokens, runAction]);
 
   const handleEligibilityCheck = useCallback(async () => {
     const ids = selectedIdList();
@@ -253,7 +274,7 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
         </div>
       </section>
 
-      <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_420px]">
         <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-center gap-2">
             <input
@@ -300,20 +321,20 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
           {message && <div className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{message}</div>}
 
           <div className="overflow-hidden rounded-lg border border-gray-200">
-            <div className="grid grid-cols-[36px_minmax(220px,1.4fr)_100px_120px_130px_120px] border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-500">
+            <div className="grid grid-cols-[36px_minmax(220px,1.4fr)_120px_130px_120px_minmax(210px,0.9fr)] border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-500">
               <div />
               <div>账号</div>
-              <div>渠道</div>
               <div>健康</div>
               <div>资格</div>
               <div>更新时间</div>
+              <div>快速提炼</div>
             </div>
             <div className="max-h-[560px] overflow-auto">
               {accounts.length === 0 ? (
                 <div className="px-4 py-12 text-center text-sm text-gray-500">暂无账号。</div>
               ) : (
                 accounts.map((account) => (
-                  <label key={account.id} className="grid cursor-pointer grid-cols-[36px_minmax(220px,1.4fr)_100px_120px_130px_120px] items-center border-b border-gray-100 px-3 py-3 text-sm hover:bg-gray-50">
+                  <div key={account.id} className="grid grid-cols-[36px_minmax(220px,1.4fr)_120px_130px_120px_minmax(210px,0.9fr)] items-center border-b border-gray-100 px-3 py-3 text-sm hover:bg-gray-50">
                     <div>
                       <input type="checkbox" checked={selectedIds.has(account.id)} onChange={() => toggleSelected(account.id)} />
                     </div>
@@ -324,11 +345,23 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
                       </div>
                       {account.note && <div className="mt-0.5 truncate text-xs text-gray-400">{account.note}</div>}
                     </div>
-                    <div className="truncate text-xs text-gray-600">{account.channels.length ? account.channels.join(', ') : '-'}</div>
                     <StatusBadge value={account.health_status} labels={healthLabels} classes={healthClasses} message={account.health_error} />
                     <StatusBadge value={account.eligibility_status} labels={eligibilityLabels} classes={eligibilityClasses} message={account.eligibility_reason} />
                     <div className="text-xs text-gray-500">{formatTime(account.updated_at)}</div>
-                  </label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {QUICK_EXTRACT_METHODS.map((method) => (
+                        <button
+                          key={`${account.id}-${method.value}`}
+                          type="button"
+                          onClick={() => void handleQuickExtract(account, method.value)}
+                          disabled={working || !account.has_access_token}
+                          className="rounded-md border border-gray-200 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-white disabled:cursor-not-allowed disabled:text-gray-300"
+                        >
+                          {method.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ))
               )}
             </div>
@@ -342,13 +375,6 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
               支持一行一个 AT、Session JSON、数组 JSON、邮箱四段格式。导入时会尽量从 JWT 中解析邮箱、账号 ID 和套餐。
             </p>
           </div>
-          <select value={defaultChannel} onChange={(event) => setDefaultChannel(event.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500">
-            <option value="upi">UPI</option>
-            <option value="ideal">iDEAL</option>
-            <option value="momo">MoMo</option>
-            <option value="kakao">Kakao</option>
-            <option value="card">直卡</option>
-          </select>
           <textarea
             value={importText}
             onChange={(event) => setImportText(event.target.value)}

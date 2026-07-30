@@ -54,7 +54,7 @@ const STORAGE_KEY_PROXY = 'upiscan_extract_proxy';
 const STORAGE_KEY_READY_PLUS_KEY = 'upiscan_ready_plus_api_key';
 
 type ProxyStage = (typeof PROXY_STAGES)[number];
-type PaymentMethod = 'upi' | 'ideal' | 'momo' | 'kakao' | 'card';
+export type PaymentMethod = 'upi' | 'ideal' | 'momo' | 'kakao' | 'card';
 type ProxySourceMode = 'builtin' | 'custom';
 type WorkspaceTab = 'local' | 'readyPlus';
 type AudioContextRef = MutableRefObject<AudioContext | null>;
@@ -583,11 +583,18 @@ function ExtractJobCard({ job, onCancel, onRemove }: ExtractJobCardProps) {
   );
 }
 
-interface LinkExtractProps {
-  injectedAccessTokens?: string;
+export interface LinkExtractLaunchRequest {
+  accessTokens: string;
+  paymentMethod?: PaymentMethod;
+  nonce: number;
 }
 
-export function LinkExtract({ injectedAccessTokens = '' }: LinkExtractProps) {
+interface LinkExtractProps {
+  injectedAccessTokens?: string;
+  launchRequest?: LinkExtractLaunchRequest | null;
+}
+
+export function LinkExtract({ injectedAccessTokens = '', launchRequest = null }: LinkExtractProps) {
   const { jobs, loading, error, activeCount, submit, cancel, remove, clearFinished } = useExtractJobs();
   const resultSoundJobRef = useRef<Set<string>>(new Set());
   const resultAudioContextRef = useRef<AudioContext | null>(null);
@@ -647,6 +654,25 @@ export function LinkExtract({ injectedAccessTokens = '' }: LinkExtractProps) {
     setAccountEligibilityResults([]);
     setAccountEligibilityError(null);
   }, [injectedAccessTokens]);
+
+  useEffect(() => {
+    const next = launchRequest?.accessTokens.trim();
+    const nextPaymentMethod = launchRequest?.paymentMethod;
+    if (!next) return;
+    setActiveWorkspaceTab('local');
+    setAccessToken(next);
+    setAccountEligibilityResults([]);
+    setAccountEligibilityError(null);
+    setMomoPermissionResults([]);
+    setMomoPermissionError(null);
+    if (nextPaymentMethod) {
+      setPaymentMethod(nextPaymentMethod);
+      setBillingCountry(defaultBillingCountry(nextPaymentMethod));
+      setManualRegions(defaultManualRegions(nextPaymentMethod));
+      setProxyChainMode('default');
+      setTestResult(null);
+    }
+  }, [launchRequest?.nonce, launchRequest?.accessTokens, launchRequest?.paymentMethod]);
 
   const proxyChain = useMemo(
     () => buildProxyChain(proxyChainMode, manualRegions, paymentMethod),

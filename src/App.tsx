@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { LinkExtract } from './pages/LinkExtract';
+import { LinkExtract, type LinkExtractLaunchRequest, type PaymentMethod } from './pages/LinkExtract';
 import { AccountLibrary } from './pages/AccountLibrary';
 import { getExtractApiBase, setExtractApiBase } from './api/client';
 
@@ -10,6 +10,7 @@ export default function App() {
   const [extractApiBaseInput, setExtractApiBaseInput] = useState(getExtractApiBase());
   const [activeTab, setActiveTab] = useState<AppTab>('extract');
   const [accountLibraryTokens, setAccountLibraryTokens] = useState('');
+  const [accountLaunchRequest, setAccountLaunchRequest] = useState<LinkExtractLaunchRequest | null>(null);
   const [saved, setSaved] = useState(false);
 
   const handleSaveExtractApiBase = useCallback(() => {
@@ -18,8 +19,15 @@ export default function App() {
     window.setTimeout(() => setSaved(false), 1600);
   }, [extractApiBaseInput]);
 
-  const handleUseAccountTokens = useCallback((tokens: string) => {
+  const handleUseAccountTokens = useCallback((tokens: string, paymentMethod?: PaymentMethod) => {
     setAccountLibraryTokens(tokens);
+    if (paymentMethod) {
+      setAccountLaunchRequest({
+        accessTokens: tokens,
+        paymentMethod,
+        nonce: Date.now(),
+      });
+    }
     setActiveTab('extract');
   }, []);
 
@@ -27,7 +35,7 @@ export default function App() {
     <ErrorBoundary>
       <div className="min-h-screen bg-gray-50">
         <header className="border-b border-gray-200 bg-white px-6 py-4">
-          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4">
+          <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-4 px-4 sm:px-6">
             <div>
               <h1 className="text-lg font-bold text-gray-900">UPIScan</h1>
               <p className="text-xs text-gray-500">支付链接提取与账号库管理</p>
@@ -52,7 +60,7 @@ export default function App() {
           </div>
         </header>
 
-        <main className="mx-auto max-w-6xl px-6 py-6">
+        <main className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6">
           <div className="mb-5 flex flex-wrap gap-2">
             <button
               type="button"
@@ -79,7 +87,7 @@ export default function App() {
           </div>
 
           {activeTab === 'extract' ? (
-            <LinkExtract injectedAccessTokens={accountLibraryTokens} />
+            <LinkExtract injectedAccessTokens={accountLibraryTokens} launchRequest={accountLaunchRequest} />
           ) : (
             <AccountLibrary onUseTokens={handleUseAccountTokens} />
           )}
