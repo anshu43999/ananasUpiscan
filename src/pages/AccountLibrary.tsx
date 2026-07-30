@@ -6,9 +6,12 @@ import {
   deleteAccounts,
   exportAccountJson,
   exportAccountTokens,
+  getAccount,
   getAccountStats,
   importAccounts,
   listAccounts,
+  updateAccount,
+  type AccountLibraryDetail,
   type AccountLibraryItem,
   type AccountLibraryStatsResponse,
 } from '../api/extract';
@@ -20,6 +23,15 @@ type AccountLibraryProps = {
 
 type StatusFilter = 'active' | 'archived' | 'all';
 type EligibilityFilter = '' | 'eligible' | 'not_eligible' | 'failed' | 'unknown' | 'all';
+
+interface AccountEditForm {
+  email: string;
+  password: string;
+  access_token: string;
+  session_json: string;
+  status: string;
+  note: string;
+}
 
 const eligibilityLabels: Record<string, string> = {
   eligible: '可提取',
@@ -81,6 +93,17 @@ function badgeClass(value: string, classes: Record<string, string>): string {
   return classes[value] || classes.unknown;
 }
 
+function accountEditForm(account: AccountLibraryDetail): AccountEditForm {
+  return {
+    email: account.email || '',
+    password: account.password || '',
+    access_token: account.access_token || '',
+    session_json: account.session_json || '',
+    status: account.status || 'active',
+    note: account.note || '',
+  };
+}
+
 export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
   const [accounts, setAccounts] = useState<AccountLibraryItem[]>([]);
   const [stats, setStats] = useState<AccountLibraryStatsResponse | null>(null);
@@ -90,6 +113,17 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
   const [eligibility, setEligibility] = useState<EligibilityFilter>('');
   const [importText, setImportText] = useState('');
   const [importOpen, setImportOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editLoading, setEditLoading] = useState(false);
+  const [editingAccount, setEditingAccount] = useState<AccountLibraryDetail | null>(null);
+  const [editForm, setEditForm] = useState<AccountEditForm>({
+    email: '',
+    password: '',
+    access_token: '',
+    session_json: '',
+    status: 'active',
+    note: '',
+  });
   const [quickMethods, setQuickMethods] = useState<Record<number, PaymentMethod>>({});
   const [loading, setLoading] = useState(false);
   const [working, setWorking] = useState(false);
@@ -194,6 +228,39 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
   const quickMethodFor = useCallback((accountId: number): PaymentMethod => {
     return quickMethods[accountId] || 'upi';
   }, [quickMethods]);
+
+  const handleEditOpen = useCallback(async (account: AccountLibraryItem) => {
+    setEditLoading(true);
+    setError(null);
+    try {
+      const detail = await getAccount(account.id);
+      setEditingAccount(detail);
+      setEditForm(accountEditForm(detail));
+      setEditOpen(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '账号信息加载失败');
+    } finally {
+      setEditLoading(false);
+    }
+  }, []);
+
+  const handleEditSave = useCallback(async () => {
+    if (!editingAccount) return;
+    await runAction(async () => {
+      const saved = await updateAccount(editingAccount.id, {
+        email: editForm.email,
+        password: editForm.password,
+        access_token: editForm.access_token,
+        session_json: editForm.session_json,
+        status: editForm.status,
+        note: editForm.note,
+      });
+      setEditOpen(false);
+      setEditingAccount(null);
+      await loadData();
+      return `已更新 ${accountTitle(saved)}`;
+    });
+  }, [editForm, editingAccount, loadData, runAction]);
 
   const handleEligibilityCheck = useCallback(async () => {
     const ids = selectedIdList();
@@ -336,7 +403,7 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
           {message && <div className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{message}</div>}
 
           <div className="overflow-x-auto rounded-md border border-gray-200">
-            <div className="grid min-w-[900px] grid-cols-[36px_minmax(260px,1.7fr)_112px_120px_136px_180px] border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-500">
+            <div className="grid min-w-[980px] grid-cols-[36px_minmax(260px,1.7fr)_112px_120px_136px_230px] border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-500">
               <div />
               <div>账号</div>
               <div>AT 健康</div>
@@ -344,12 +411,12 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
               <div>更新时间</div>
               <div>提炼链路</div>
             </div>
-            <div className="max-h-[64vh] min-h-[320px] min-w-[900px] overflow-y-auto">
+            <div className="max-h-[64vh] min-h-[320px] min-w-[980px] overflow-y-auto">
               {accounts.length === 0 ? (
                 <div className="px-4 py-12 text-center text-sm text-gray-500">暂无账号。</div>
               ) : (
                 accounts.map((account) => (
-                  <div key={account.id} className="grid grid-cols-[36px_minmax(260px,1.7fr)_112px_120px_136px_180px] items-center border-b border-gray-100 px-3 py-2.5 text-sm hover:bg-gray-50">
+                  <div key={account.id} className="grid grid-cols-[36px_minmax(260px,1.7fr)_112px_120px_136px_230px] items-center border-b border-gray-100 px-3 py-2.5 text-sm hover:bg-gray-50">
                     <div>
                       <input type="checkbox" checked={selectedIds.has(account.id)} onChange={() => toggleSelected(account.id)} />
                     </div>
@@ -386,6 +453,14 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
                         className="h-8 rounded-md border border-gray-200 px-2.5 text-xs font-medium text-gray-700 hover:bg-white disabled:cursor-not-allowed disabled:text-gray-300"
                       >
                         使用
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleEditOpen(account)}
+                        disabled={working || editLoading}
+                        className="h-8 rounded-md border border-gray-200 px-2.5 text-xs font-medium text-gray-700 hover:bg-white disabled:cursor-not-allowed disabled:text-gray-300"
+                      >
+                        编辑
                       </button>
                     </div>
                   </div>
@@ -438,6 +513,112 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
                   className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 disabled:bg-gray-300"
                 >
                   {working ? '处理中...' : '导入账号库'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/45 px-4 py-6">
+          <div className="w-full max-w-4xl rounded-lg border border-gray-200 bg-white shadow-xl">
+            <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
+              <div className="min-w-0">
+                <h3 className="text-base font-semibold text-gray-900">更新账号信息</h3>
+                <p className="mt-1 truncate text-xs text-gray-500">
+                  {editingAccount ? accountTitle(editingAccount) : '-'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditOpen(false)}
+                disabled={working}
+                className="rounded-md border border-gray-200 px-2.5 py-1 text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:text-gray-300"
+              >
+                关闭
+              </button>
+            </div>
+            <div className="max-h-[76vh] overflow-y-auto px-5 py-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1.5 block text-sm font-medium text-gray-700">邮箱</span>
+                  <input
+                    value={editForm.email}
+                    onChange={(event) => setEditForm((current) => ({ ...current, email: event.target.value }))}
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1.5 block text-sm font-medium text-gray-700">账号状态</span>
+                  <select
+                    value={editForm.status}
+                    onChange={(event) => setEditForm((current) => ({ ...current, status: event.target.value }))}
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="active">可用</option>
+                    <option value="archived">归档</option>
+                    <option value="disabled">停用</option>
+                  </select>
+                </label>
+              </div>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1.5 block text-sm font-medium text-gray-700">密码</span>
+                  <input
+                    value={editForm.password}
+                    onChange={(event) => setEditForm((current) => ({ ...current, password: event.target.value }))}
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1.5 block text-sm font-medium text-gray-700">备注</span>
+                  <input
+                    value={editForm.note}
+                    onChange={(event) => setEditForm((current) => ({ ...current, note: event.target.value }))}
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
+                  />
+                </label>
+              </div>
+
+              <label className="mt-4 block">
+                <span className="mb-1.5 block text-sm font-medium text-gray-700">Access Token</span>
+                <textarea
+                  value={editForm.access_token}
+                  onChange={(event) => setEditForm((current) => ({ ...current, access_token: event.target.value }))}
+                  rows={7}
+                  className="max-h-[34vh] w-full resize-y rounded-md border border-gray-300 px-3 py-2 font-mono text-xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
+                />
+              </label>
+
+              <label className="mt-4 block">
+                <span className="mb-1.5 block text-sm font-medium text-gray-700">Session JSON</span>
+                <textarea
+                  value={editForm.session_json}
+                  onChange={(event) => setEditForm((current) => ({ ...current, session_json: event.target.value }))}
+                  rows={5}
+                  placeholder="可选，粘贴包含 accessToken 的 Session JSON"
+                  className="max-h-[28vh] w-full resize-y rounded-md border border-gray-300 px-3 py-2 font-mono text-xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
+                />
+              </label>
+
+              <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-gray-100 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setEditOpen(false)}
+                  disabled={working}
+                  className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:text-gray-300"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleEditSave()}
+                  disabled={working || !editingAccount}
+                  className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 disabled:bg-gray-300"
+                >
+                  {working ? '保存中...' : '保存更新'}
                 </button>
               </div>
             </div>

@@ -208,6 +208,21 @@ class AccountLibraryImportResponse(BaseModel):
     items: list[AccountLibraryItem] = Field(default_factory=list)
 
 
+class AccountLibraryUpdateRequest(BaseModel):
+    email: str | None = None
+    password: str | None = None
+    access_token: str | None = None
+    session_json: str | None = None
+    status: str | None = None
+    note: str | None = None
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_status(cls, value: Any) -> str | None:
+        text = str(value or "").strip().lower()
+        return text or None
+
+
 class AccountLibraryIdsRequest(BaseModel):
     ids: list[int] = Field(default_factory=list)
 

@@ -30,6 +30,7 @@ from .models import (
     AccountLibraryListResponse,
     AccountLibraryMutateResponse,
     AccountLibraryStatsResponse,
+    AccountLibraryUpdateRequest,
     ExtractJobCreate,
     ExtractJobCreated,
     ExtractJobSnapshot,
@@ -143,6 +144,17 @@ async def get_account_library_item(account_id: int) -> AccountLibraryDetail:
     if payload is None:
         raise HTTPException(status_code=404, detail="account not found")
     return AccountLibraryDetail(**payload)
+
+
+@app.put("/api/accounts/{account_id}", response_model=AccountLibraryDetail)
+async def update_account_library_item(account_id: int, request: AccountLibraryUpdateRequest) -> AccountLibraryDetail:
+    payload = await asyncio.to_thread(account_library.update_account, account_id, request.model_dump(exclude_unset=True))
+    if payload is None:
+        raise HTTPException(status_code=404, detail="account not found")
+    detail = await asyncio.to_thread(account_library.get_account, account_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="account not found")
+    return AccountLibraryDetail(**detail)
 
 
 @app.post("/api/accounts/{account_id}/archive", response_model=AccountLibraryMutateResponse)

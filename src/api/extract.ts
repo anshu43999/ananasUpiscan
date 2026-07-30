@@ -272,6 +272,15 @@ export interface AccountLibraryExportJsonResponse {
   text: string;
 }
 
+export interface AccountLibraryUpdateOptions {
+  email?: string;
+  password?: string;
+  access_token?: string;
+  session_json?: string;
+  status?: string;
+  note?: string;
+}
+
 export function listAccounts(
   options: { search?: string; status?: string; eligibility?: string; limit?: number } = {},
 ): Promise<AccountLibraryListResponse> {
@@ -292,6 +301,17 @@ export function importAccounts(text: string, defaultChannel = ''): Promise<Accou
   return extractFetch('/api/accounts/import', {
     method: 'POST',
     body: JSON.stringify({ text, default_channel: defaultChannel }),
+  });
+}
+
+export function getAccount(accountId: number): Promise<AccountLibraryDetail> {
+  return extractFetch(`/api/accounts/${accountId}`);
+}
+
+export function updateAccount(accountId: number, options: AccountLibraryUpdateOptions): Promise<AccountLibraryDetail> {
+  return extractFetch(`/api/accounts/${accountId}`, {
+    method: 'PUT',
+    body: JSON.stringify(options),
   });
 }
 

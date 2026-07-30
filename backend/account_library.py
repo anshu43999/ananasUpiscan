@@ -351,6 +351,99 @@ def set_status(ids: list[int], status: str) -> dict[str, Any]:
     return {"ok": True, "updated": len(ids)}
 
 
+def update_account(account_id: int, updates: dict[str, Any]) -> dict[str, Any] | None:
+    account_id = int(account_id or 0)
+    if account_id <= 0:
+        return None
+    allowed_statuses = {"active", "archived", "disabled"}
+    with connect() as conn:
+        existing = conn.execute("SELECT * FROM account_library WHERE id=?", (account_id,)).fetchone()
+        if not existing:
+            return None
+
+        current_token = str(existing["access_token"] or "").strip()
+        next_email = str(updates.get("email") if updates.get("email") is not None else existing["email"] or "").strip()
+        next_password = str(updates.get("password") if updates.get("password") is not None else existing["password"] or "").strip()
+        next_session_json = str(updates.get("session_json") if updates.get("session_json") is not None else existing["session_json"] or "").strip()
+        explicit_token = updates.get("access_token")
+        next_token = str(explicit_token if explicit_token is not None else current_token or "").strip()
+        if next_session_json and explicit_token is None:
+            extracted = _extract_access_token(next_session_json)
+            if extracted:
+                next_token = extracted
+
+        identity = _parse_token_identity(next_token) if next_token else None
+        next_account_id = str(existing["account_id"] or "").strip()
+        next_plan_type = str(existing["plan_type"] or "").strip()
+        if identity and identity.token_ok:
+            next_email = next_email or str(identity.email or "").strip()
+            next_account_id = str(identity.account_id or next_account_id or "").strip()
+            next_plan_type = str(identity.plan_type or next_plan_type or "").strip()
+
+        next_status = str(updates.get("status") if updates.get("status") is not None else existing["status"] or "active").strip().lower()
+        if next_status not in allowed_statuses:
+            next_status = "active"
+        next_note = str(updates.get("note") if updates.get("note") is not None else existing["note"] or "").strip()
+        token_changed = next_token != current_token
+        now = utc_now()
+
+        eligibility_status = str(existing["eligibility_status"] or "unknown")
+        eligibility_reason = str(existing["eligibility_reason"] or "")
+        eligibility_json = str(existing["eligibility_json"] or "{}")
+        last_checked_at = str(existing["last_checked_at"] or "")
+        health_status = str(existing["health_status"] or "unknown")
+        health_checked_at = str(existing["health_checked_at"] or "")
+        health_source = str(existing["health_source"] or "")
+        health_error = str(existing["health_error"] or "")
+        health_json = str(existing["health_json"] or "{}")
+        if token_changed:
+            eligibility_status = "unknown"
+            eligibility_reason = ""
+            eligibility_json = "{}"
+            last_checked_at = ""
+            health_status = "unknown"
+            health_checked_at = ""
+            health_source = ""
+            health_error = ""
+            health_json = "{}"
+
+        conn.execute(
+            """
+            UPDATE account_library
+            SET account_id=?, email=?, password=?, access_token=?, session_json=?,
+                plan_type=?, status=?, note=?,
+                eligibility_status=?, eligibility_reason=?, eligibility_json=?, last_checked_at=?,
+                health_status=?, health_checked_at=?, health_source=?, health_error=?, health_json=?,
+                updated_at=?
+            WHERE id=?
+            """,
+            (
+                next_account_id,
+                next_email,
+                next_password,
+                next_token,
+                next_session_json,
+                next_plan_type,
+                next_status,
+                next_note,
+                eligibility_status,
+                eligibility_reason,
+                eligibility_json,
+                last_checked_at,
+                health_status,
+                health_checked_at,
+                health_source,
+                health_error,
+                health_json,
+                now,
+                account_id,
+            ),
+        )
+        conn.commit()
+        saved = conn.execute("SELECT * FROM account_library WHERE id=?", (account_id,)).fetchone()
+        return row_to_summary(saved)
+
+
 def delete_accounts(ids: list[int]) -> dict[str, Any]:
     ids = [int(item) for item in ids if int(item) > 0]
     if not ids:
