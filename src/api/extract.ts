@@ -322,6 +322,13 @@ export function exportAccountTokens(ids: number[], onlyEligible = false): Promis
   });
 }
 
+export function exportAccountImportText(ids: number[]): Promise<AccountLibraryExportTokenResponse> {
+  return extractFetch('/api/accounts-bulk/export-import-text', {
+    method: 'POST',
+    body: JSON.stringify({ ids }),
+  });
+}
+
 export function checkStoredAccountEligibility(ids: number[]): Promise<AccountLibraryCheckResponse> {
   return extractFetch('/api/accounts-bulk/check-eligibility', {
     method: 'POST',

@@ -193,6 +193,12 @@ async def export_account_library_tokens(request: AccountLibraryExportTokenReques
     return AccountLibraryExportTokenResponse(**payload)
 
 
+@app.post("/api/accounts-bulk/export-import-text", response_model=AccountLibraryExportTokenResponse)
+async def export_account_library_import_text(request: AccountLibraryIdsRequest) -> AccountLibraryExportTokenResponse:
+    payload = await asyncio.to_thread(account_library.export_import_text, request.ids or None)
+    return AccountLibraryExportTokenResponse(**payload)
+
+
 @app.post("/api/accounts-bulk/check-eligibility", response_model=AccountLibraryCheckResponse)
 async def check_account_library_items(request: AccountLibraryCheckRequest) -> AccountLibraryCheckResponse:
     payload = await asyncio.to_thread(account_library.check_accounts, request.ids, request.promo_id, request.concurrency)

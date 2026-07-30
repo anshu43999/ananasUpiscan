@@ -472,6 +472,36 @@ def export_tokens(ids: list[int] | None = None, *, only_eligible: bool = False) 
     return {"ok": True, "count": len(tokens), "text": "\n".join(tokens), "items": [row_to_summary(row) for row in rows]}
 
 
+def _export_field(value: Any) -> str:
+    return str(value or "").replace("\r", " ").replace("\n", " ").replace("----", " ").strip()
+
+
+def export_import_text(ids: list[int] | None = None) -> dict[str, Any]:
+    sql = "SELECT * FROM account_library WHERE status!='deleted' AND access_token!=''"
+    params: list[Any] = []
+    if ids:
+        normalized = [int(item) for item in ids if int(item) > 0]
+        if normalized:
+            sql += f" AND id IN ({','.join('?' for _ in normalized)})"
+            params.extend(normalized)
+    sql += " ORDER BY updated_at DESC, id DESC"
+    with connect() as conn:
+        rows = conn.execute(sql, tuple(params)).fetchall()
+    lines = [
+        "----".join(
+            [
+                _export_field(row["email"]),
+                _export_field(row["password"]),
+                _export_field(row["account_id"]),
+                _export_field(row["access_token"]),
+            ]
+        )
+        for row in rows
+        if str(row["access_token"] or "").strip()
+    ]
+    return {"ok": True, "count": len(lines), "text": "\n".join(lines), "items": [row_to_summary(row) for row in rows]}
+
+
 def check_accounts(ids: list[int], promo_id: str = "plus-1-month-free", concurrency: int = 3) -> dict[str, Any]:
     ids = [int(item) for item in ids if int(item) > 0]
     if not ids:

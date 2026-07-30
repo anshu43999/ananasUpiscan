@@ -4,6 +4,7 @@ import {
   checkStoredAccountEligibility,
   checkStoredAccountHealth,
   deleteAccounts,
+  exportAccountImportText,
   exportAccountJson,
   exportAccountTokens,
   getAccount,
@@ -212,6 +213,15 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
     });
   }, [runAction, selectedIdList]);
 
+  const handleExportImportText = useCallback(async () => {
+    await runAction(async () => {
+      const result = await exportAccountImportText(selectedIdList());
+      if (!result.text.trim()) return '没有可导出的账号信息';
+      await navigator.clipboard.writeText(result.text);
+      return `已复制 ${result.count} 个账号，格式可直接导入`;
+    });
+  }, [runAction, selectedIdList]);
+
   const handleQuickExtract = useCallback(async (account: AccountLibraryItem, paymentMethod: PaymentMethod) => {
     if (!account.has_access_token) {
       setError('这个账号没有 Access Token，无法加入提取。');
@@ -393,6 +403,7 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
               <ActionButton onClick={() => void handleExportTokens(false, true)} disabled={working || selectedIds.size === 0}>加入提取</ActionButton>
               <ActionButton onClick={() => void handleExportTokens(true, true)} disabled={working || selectedIds.size === 0}>仅通过加入</ActionButton>
               <ActionButton onClick={() => void handleExportTokens(false, false)} disabled={working || selectedIds.size === 0}>复制 AT</ActionButton>
+              <ActionButton onClick={() => void handleExportImportText()} disabled={working || selectedIds.size === 0}>导出账号</ActionButton>
               <ActionButton onClick={() => void handleExportJson()} disabled={working || selectedIds.size === 0}>导出 JSON</ActionButton>
               <ActionButton onClick={() => void handleArchive()} disabled={working || selectedIds.size === 0}>归档</ActionButton>
               <ActionButton onClick={() => void handleDelete()} disabled={working || selectedIds.size === 0} tone="rose">删除</ActionButton>
