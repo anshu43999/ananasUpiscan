@@ -26,7 +26,9 @@ from .extractor.session import (
 
 
 CHATGPT_CHECKOUT_URL = "https://chatgpt.com/backend-api/payments/checkout"
+CHATGPT_WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 THIRD_PARTY_ELIGIBILITY_URL = "https://cha.nerver.cc/api/v1/check"
+WHAM_USAGE_USER_AGENT = "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal"
 PLUS_PLAN_MARKERS = {
     "plus",
     "pro",
@@ -190,6 +192,17 @@ def _plan_is_paid(plan_type: str | None) -> bool:
     return bool(plan and plan in PLUS_PLAN_MARKERS)
 
 
+def normalize_subscription_plan(plan_type: str | None) -> str:
+    raw = str(plan_type or "").strip().lower().replace(" ", "")
+    if not raw:
+        return "free"
+    if any(marker in raw for marker in ("team", "enterprise", "business")):
+        return "team"
+    if any(marker in raw for marker in ("plus", "pro", "premium", "paid", "chatgptplus", "chatgptpro")):
+        return "plus"
+    return "free"
+
+
 def _plus_signal(parsed: Any, text: str) -> bool:
     if isinstance(parsed, dict):
         code = str(parsed.get("code") or parsed.get("error") or parsed.get("message") or "").lower()
@@ -293,6 +306,81 @@ def _checkout_session(ctx: ExtractionContext, identity: TokenIdentity) -> reques
         headers["Chatgpt-Account-Id"] = identity.account_id
     session.headers.update(headers)
     return session
+
+
+def fetch_subscription_status_details(identity: TokenIdentity, proxy: str = "") -> dict[str, Any]:
+    if not identity.token:
+        return {
+            "ok": False,
+            "status": "unknown",
+            "source": "backend-api/wham/usage",
+            "error": "missing access token",
+        }
+
+    timeout = _env_float("ACCOUNT_SUBSCRIPTION_TIMEOUT", 20, 1)
+    proxy = (
+        str(proxy or "").strip()
+        or os.environ.get("ACCOUNT_SUBSCRIPTION_PROXY", "").strip()
+        or os.environ.get("ACCOUNT_HEALTH_PROXY", "").strip()
+        or os.environ.get("ACCOUNT_CHECK_PROXY", "").strip()
+    )
+    try:
+        ctx = _checkout_context()
+        session = new_session(ctx, proxy)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "status": "unknown",
+            "source": "backend-api/wham/usage",
+            "error": str(exc),
+        }
+
+    headers = {
+        "Authorization": f"Bearer {identity.token}",
+        "Accept": "application/json",
+        "Accept-Language": os.environ.get("ACCOUNT_SUBSCRIPTION_ACCEPT_LANGUAGE", "en-US,en;q=0.9"),
+        "Origin": "https://chatgpt.com",
+        "Referer": "https://chatgpt.com/",
+        "User-Agent": os.environ.get("ACCOUNT_SUBSCRIPTION_USER_AGENT", WHAM_USAGE_USER_AGENT),
+    }
+    if identity.account_id:
+        headers["Chatgpt-Account-Id"] = identity.account_id
+
+    try:
+        response = session.get(CHATGPT_WHAM_USAGE_URL, headers=headers, timeout=timeout)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "status": "unknown",
+            "source": "backend-api/wham/usage",
+            "error": str(exc),
+        }
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+
+    if response.status_code != 200:
+        text = str(getattr(response, "text", "") or "")[:500]
+        return {
+            "ok": False,
+            "status": "unknown",
+            "source": "backend-api/wham/usage",
+            "http_status": response.status_code,
+            "error": f"subscription check failed HTTP {response.status_code}: {text}",
+        }
+
+    plan = normalize_subscription_plan(_clean_str(payload.get("plan_type")))
+    return {
+        "ok": True,
+        "status": plan,
+        "source": "backend-api/wham/usage",
+        "http_status": response.status_code,
+        "plan_type": plan,
+    }
 
 
 def _run_checkout_probe(identity: TokenIdentity, promo_id: str) -> dict[str, Any]:

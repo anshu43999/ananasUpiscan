@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .account_check import _extract_access_token, _parse_token_identity, check_account_eligibility
+from .account_check import _extract_access_token, _parse_token_identity, check_account_eligibility, fetch_subscription_status_details
 
 
 DB_LOCK = threading.Lock()
@@ -596,6 +596,43 @@ def _token_health(row: sqlite3.Row) -> dict[str, Any]:
             "account_id": identity.account_id,
             "plan_type": identity.plan_type,
         }
+    if not identity.account_id and str(row["account_id"] or "").strip():
+        identity.account_id = str(row["account_id"] or "").strip()
+    if not identity.email and str(row["email"] or "").strip():
+        identity.email = str(row["email"] or "").strip()
+    subscription = fetch_subscription_status_details(identity)
+    if subscription.get("ok"):
+        plan = str(subscription.get("plan_type") or subscription.get("status") or "free").strip().lower().replace(" ", "") or "free"
+        paid = plan in PAID_PLANS
+        return {
+            "key": key,
+            "ok": True,
+            "health_status": "active_plus" if paid else "active_free",
+            "source": str(subscription.get("source") or "backend-api/wham/usage"),
+            "message": "access token is valid and subscription API is reachable",
+            "jwt_exp_ms": identity.jwt_exp_ms,
+            "jwt_exp_in_sec": identity.jwt_exp_in_sec,
+            "email": identity.email,
+            "account_id": identity.account_id,
+            "plan_type": plan,
+            "subscription_status": str(subscription.get("status") or plan),
+        }
+
+    http_status = int(subscription.get("http_status") or 0)
+    if http_status in {401, 403}:
+        return {
+            "key": key,
+            "ok": False,
+            "health_status": "invalid_token",
+            "source": str(subscription.get("source") or "backend-api/wham/usage"),
+            "message": str(subscription.get("error") or "access token rejected by subscription API"),
+            "jwt_exp_ms": identity.jwt_exp_ms,
+            "jwt_exp_in_sec": identity.jwt_exp_in_sec,
+            "email": identity.email,
+            "account_id": identity.account_id,
+            "plan_type": identity.plan_type,
+        }
+
     plan = str(identity.plan_type or row["plan_type"] or "free").strip().lower().replace(" ", "") or "free"
     paid = plan in PAID_PLANS
     return {
@@ -603,12 +640,14 @@ def _token_health(row: sqlite3.Row) -> dict[str, Any]:
         "ok": True,
         "health_status": "active_plus" if paid else "active_free",
         "source": "local_jwt",
-        "message": "access token JWT is parseable and not expired",
+        "message": "access token JWT is parseable and not expired; subscription API check failed",
         "jwt_exp_ms": identity.jwt_exp_ms,
         "jwt_exp_in_sec": identity.jwt_exp_in_sec,
         "email": identity.email,
         "account_id": identity.account_id,
         "plan_type": plan,
+        "subscription_check_error": str(subscription.get("error") or ""),
+        "subscription_source": str(subscription.get("source") or "backend-api/wham/usage"),
     }
 
 
