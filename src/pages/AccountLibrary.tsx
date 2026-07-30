@@ -16,6 +16,7 @@ import {
   type AccountLibraryItem,
   type AccountLibraryStatsResponse,
 } from '../api/extract';
+import { copyText } from '../utils/clipboard';
 import type { PaymentMethod } from './LinkExtract';
 
 type AccountLibraryProps = {
@@ -200,7 +201,7 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
         onUseTokens(result.text);
         return `已将 ${result.count} 个 AT 加入链接提取`;
       }
-      await navigator.clipboard.writeText(result.text);
+      await copyText(result.text);
       return `已复制 ${result.count} 个 AT`;
     });
   }, [onUseTokens, runAction, selectedIdList]);
@@ -208,7 +209,7 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
   const handleExportJson = useCallback(async () => {
     await runAction(async () => {
       const result = await exportAccountJson(selectedIdList(), false);
-      await navigator.clipboard.writeText(result.text);
+      await copyText(result.text);
       return `已复制 ${result.count} 个账号 JSON 摘要`;
     });
   }, [runAction, selectedIdList]);
@@ -217,7 +218,7 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
     await runAction(async () => {
       const result = await exportAccountImportText(selectedIdList());
       if (!result.text.trim()) return '没有可导出的账号信息';
-      await navigator.clipboard.writeText(result.text);
+      await copyText(result.text);
       return `已复制 ${result.count} 个账号，格式可直接导入`;
     });
   }, [runAction, selectedIdList]);

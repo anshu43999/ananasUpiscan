@@ -24,6 +24,7 @@ import {
   type ReadyPlusTaskSubmitResponse,
   type StartExtractOptions,
 } from '../api/extract';
+import { copyText } from '../utils/clipboard';
 
 const STATUS_LABELS: Record<string, string> = {
   pending: '等待中',
@@ -469,7 +470,7 @@ function ExtractJobCard({ job, onCancel, onRemove }: ExtractJobCardProps) {
 
   const handleCopyUrl = useCallback(async () => {
     if (!job.result?.url) return;
-    await navigator.clipboard.writeText(job.result.url);
+    await copyText(job.result.url);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
   }, [job.result?.url]);
@@ -1148,7 +1149,7 @@ export function LinkExtract({ injectedAccessTokens = '', launchRequest = null }:
   const copyCheckedProxies = useCallback(async () => {
     const text = goodProxyItems.map((item) => item.raw).join('\n');
     if (!text) return;
-    await navigator.clipboard.writeText(text);
+    await copyText(text);
   }, [goodProxyItems]);
 
   useEffect(() => {
