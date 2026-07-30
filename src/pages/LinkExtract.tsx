@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObjec
 import QRCode from 'qrcode';
 import { useExtractJobs } from '../hooks/useExtractJob';
 import {
+  checkAccountEligibility,
   checkMomoPermission,
   checkProxies,
   downloadReadyPlusArtifact,
@@ -11,6 +12,7 @@ import {
   submitReadyPlusTask,
   testProxyChain,
   type ExtractJobResponse,
+  type AccountEligibilityCheckResponse,
   type MomoPermissionCheckResponse,
   type ProxyCheckItem,
   type ProxyCheckResponse,
@@ -78,6 +80,13 @@ interface MomoPermissionBatchItem {
   index: number;
   tokenLabel: string;
   result: MomoPermissionCheckResponse | null;
+  error: string | null;
+}
+
+interface AccountEligibilityBatchItem {
+  index: number;
+  tokenLabel: string;
+  result: AccountEligibilityCheckResponse | null;
   error: string | null;
 }
 
@@ -210,6 +219,26 @@ function tokenPreview(value: string, index: number): string {
   if (!token) return `AT ${index + 1}`;
   if (token.length <= 14) return `AT ${index + 1}`;
   return `AT ${index + 1}: ${token.slice(0, 6)}...${token.slice(-4)}`;
+}
+
+function accountEligibilityLabel(result: AccountEligibilityCheckResponse): string {
+  if (result.error) return '检测失败';
+  if (!result.token_ok) return 'AT 无效';
+  if (result.jwt_expired) return 'AT 已过期';
+  if (result.eligible) return '账号符合资格';
+  return '账号不符合资格';
+}
+
+function accountEligibilityClass(result: AccountEligibilityCheckResponse): string {
+  if (result.error || !result.token_ok || result.jwt_expired) return 'border-rose-200 bg-rose-50 text-rose-700';
+  if (result.eligible) return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  return 'border-amber-200 bg-amber-50 text-amber-700';
+}
+
+function channelEligibilityText(value: boolean | null | undefined, reason?: string | null): string {
+  if (value === true) return '可用';
+  if (value === false) return reason ? `不可用：${reason}` : '不可用';
+  return '-';
 }
 
 function parseReadyPlusSessions(value: string): ReadyPlusParsedSessions {
@@ -590,6 +619,9 @@ export function LinkExtract() {
   const [proxyCheckLoading, setProxyCheckLoading] = useState(false);
   const [proxyCheckResult, setProxyCheckResult] = useState<ProxyCheckResponse | null>(null);
   const [proxyCheckError, setProxyCheckError] = useState<string | null>(null);
+  const [accountEligibilityLoading, setAccountEligibilityLoading] = useState(false);
+  const [accountEligibilityResults, setAccountEligibilityResults] = useState<AccountEligibilityBatchItem[]>([]);
+  const [accountEligibilityError, setAccountEligibilityError] = useState<string | null>(null);
   const [momoPermissionLoading, setMomoPermissionLoading] = useState(false);
   const [momoPermissionResults, setMomoPermissionResults] = useState<MomoPermissionBatchItem[]>([]);
   const [momoPermissionError, setMomoPermissionError] = useState<string | null>(null);
@@ -909,6 +941,53 @@ export function LinkExtract() {
       setProxyCheckLoading(false);
     }
   }, [proxyCheckConcurrency, proxyCheckInput, proxyCheckProtocol, proxyCheckTimeoutMs]);
+
+  const handleAccountEligibilityCheck = useCallback(async () => {
+    if (!accessTokenItems.length) {
+      setAccountEligibilityError('请先填写 Access Token。');
+      return;
+    }
+    setAccountEligibilityLoading(true);
+    setAccountEligibilityError(null);
+    setAccountEligibilityResults(
+      accessTokenItems.map((token, index) => ({
+        index,
+        tokenLabel: tokenPreview(token, index),
+        result: null,
+        error: null,
+      })),
+    );
+    try {
+      const results = await Promise.all(
+        accessTokenItems.map(async (token, index): Promise<AccountEligibilityBatchItem> => {
+          try {
+            const result = await checkAccountEligibility({
+              token,
+              promo_id: 'plus-1-month-free',
+            });
+            return {
+              index,
+              tokenLabel: tokenPreview(token, index),
+              result,
+              error: null,
+            };
+          } catch (e: unknown) {
+            return {
+              index,
+              tokenLabel: tokenPreview(token, index),
+              result: null,
+              error: e instanceof Error ? e.message : '账号资格检测失败',
+            };
+          }
+        }),
+      );
+      setAccountEligibilityResults(results);
+    } catch (e: unknown) {
+      setAccountEligibilityError(e instanceof Error ? e.message : '账号资格检测失败');
+    } finally {
+      setAccountEligibilityLoading(false);
+    }
+  }, [accessTokenItems]);
 
   const handleMomoPermissionCheck = useCallback(async () => {
     if (!accessTokenItems.length) {
@@ -1570,20 +1649,95 @@ export function LinkExtract() {
               <span className="mb-1.5 block text-sm font-medium text-gray-700">Access Token</span>
               <textarea
                 value={accessToken}
-                onChange={(event) => setAccessToken(event.target.value)}
+                onChange={(event) => {
+                  setAccessToken(event.target.value);
+                  setAccountEligibilityResults([]);
+                  setAccountEligibilityError(null);
+                }}
                 rows={6}
                 required
                 placeholder="允许多个 Access Token，一行一个；包含 accessToken 的导出 JSON 也可以直接粘贴"
                 className="w-full resize-y rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
               />
-              <div className="mt-1.5 flex items-center justify-between text-xs">
+              <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 text-xs">
                 <span className={accessTokenTooMany ? 'text-rose-600' : 'text-gray-500'}>
                   {accessTokenTooMany ? '每次最多提交 10 个 Access Token' : '最多 10 个 Access Token，一行一个'}
                 </span>
-                <span className={accessTokenTooMany ? 'font-semibold text-rose-600' : 'text-gray-500'}>
-                  {rawAccessTokenInputCount}/10
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className={accessTokenTooMany ? 'font-semibold text-rose-600' : 'text-gray-500'}>
+                    {rawAccessTokenInputCount}/10
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void handleAccountEligibilityCheck()}
+                    disabled={accountEligibilityLoading || !accessTokenItems.length || accessTokenTooMany}
+                    className="rounded-md border border-emerald-200 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-300"
+                  >
+                    {accountEligibilityLoading
+                      ? '检测中...'
+                      : accessTokenItems.length > 1
+                        ? `检测 ${accessTokenItems.length} 个账号`
+                        : '检测账号资格'}
+                  </button>
+                </div>
               </div>
+
+              {accountEligibilityError && (
+                <div className="mt-3 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  {accountEligibilityError}
+                </div>
+              )}
+
+              {accountEligibilityResults.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  {accountEligibilityResults.map((item) => {
+                    const pending = accountEligibilityLoading && !item.result && !item.error;
+                    return (
+                      <div key={item.index} className="grid gap-2 md:grid-cols-[180px_minmax(0,1fr)]">
+                        <div
+                          className={`rounded-md border px-3 py-2 text-sm font-semibold ${
+                            pending
+                              ? 'border-amber-200 bg-white text-amber-700'
+                              : item.result
+                                ? accountEligibilityClass(item.result)
+                                : 'border-rose-200 bg-rose-50 text-rose-700'
+                          }`}
+                        >
+                          <div>{item.tokenLabel}</div>
+                          <div className="mt-1 text-xs font-medium">
+                            {pending ? '检测中' : item.result ? accountEligibilityLabel(item.result) : '检测失败'}
+                          </div>
+                        </div>
+                        <div className="min-w-0 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700">
+                          {item.result ? (
+                            <>
+                              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                                <span>邮箱：{item.result.email || '-'}</span>
+                                <span>套餐：{item.result.plan_type || '-'}</span>
+                                <span>优惠：{item.result.coupon_state || item.result.reason || '-'}</span>
+                                <span>过期：{item.result.jwt_expired ? '是' : '否'}</span>
+                              </div>
+                              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+                                <span>UPI：{channelEligibilityText(item.result.upi_eligible, item.result.upi_eligible_reason)}</span>
+                                <span>iDEAL：{channelEligibilityText(item.result.ideal_eligible, item.result.ideal_eligible_reason)}</span>
+                                <span>GCash：{channelEligibilityText(item.result.gcash_eligible, item.result.gcash_eligible_reason)}</span>
+                              </div>
+                              <div className="mt-1 break-all font-mono text-gray-500">
+                                account_id: {item.result.account_id || '-'}
+                              </div>
+                              {item.result.error && (
+                                <div className="mt-1 text-rose-600">{item.result.error}</div>
+                              )}
+                            </>
+                          ) : (
+                            <div className="text-rose-600">{item.error || '账号资格检测失败'}</div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </label>
 
             <div className="space-y-4">

@@ -146,6 +146,45 @@ export function checkMomoPermission(
   });
 }
 
+export interface AccountEligibilityCheckOptions {
+  token: string;
+  promo_id?: string;
+}
+
+export interface AccountEligibilityCheckResponse {
+  token_ok: boolean;
+  eligible: boolean;
+  reason?: string | null;
+  coupon_state?: string | null;
+  promo_id?: string | null;
+  status?: number | null;
+  email?: string | null;
+  account_id?: string | null;
+  plan_type?: string | null;
+  phone_number?: string | null;
+  phone_verified?: boolean | null;
+  reg_type?: string | null;
+  jwt_expired: boolean;
+  jwt_exp_ms?: number | null;
+  jwt_exp_in_sec?: number | null;
+  upi_eligible?: boolean | null;
+  upi_eligible_reason?: string | null;
+  gcash_eligible?: boolean | null;
+  gcash_eligible_reason?: string | null;
+  ideal_eligible?: boolean | null;
+  ideal_eligible_reason?: string | null;
+  error?: string | null;
+}
+
+export function checkAccountEligibility(
+  options: AccountEligibilityCheckOptions,
+): Promise<AccountEligibilityCheckResponse> {
+  return extractFetch('/api/account-eligibility-check', {
+    method: 'POST',
+    body: JSON.stringify(options),
+  });
+}
+
 export interface ReadyPlusTaskSubmitItem {
   client_ref: string;
   session_json: unknown;

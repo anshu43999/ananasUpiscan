@@ -13,6 +13,8 @@ from starlette.background import BackgroundTask
 
 from .job_manager import JobManager
 from .models import (
+    AccountEligibilityCheckRequest,
+    AccountEligibilityCheckResponse,
     ExtractJobCreate,
     ExtractJobCreated,
     ExtractJobSnapshot,
@@ -26,6 +28,7 @@ from .models import (
     ReadyPlusTaskSubmitRequest,
     ReadyPlusTaskSubmitResponse,
 )
+from .account_check import check_account_eligibility
 from .extractor.context import ExtractionContext
 from .extractor.extract import config_from_env, load_token
 from .extractor.vietnam import check_momo_permission
@@ -87,6 +90,12 @@ async def cancel_extract_job(job_id: str) -> ExtractJobSnapshot:
 @app.post("/api/proxy-chain-test", response_model=ProxyChainTestResult)
 async def proxy_chain_test() -> ProxyChainTestResult:
     return ProxyChainTestResult(success=True, latency_ms=0)
+
+
+@app.post("/api/account-eligibility-check", response_model=AccountEligibilityCheckResponse)
+async def account_eligibility_check(request: AccountEligibilityCheckRequest) -> AccountEligibilityCheckResponse:
+    payload = await asyncio.to_thread(check_account_eligibility, request.token, request.promo_id)
+    return AccountEligibilityCheckResponse(**payload)
 
 
 def _ready_plus_error(exc: Exception) -> HTTPException:

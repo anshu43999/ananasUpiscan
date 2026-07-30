@@ -128,6 +128,36 @@ class MomoPermissionCheckResponse(BaseModel):
     error: str | None = None
 
 
+class AccountEligibilityCheckRequest(BaseModel):
+    token: str = Field(min_length=1)
+    promo_id: str = "plus-1-month-free"
+
+
+class AccountEligibilityCheckResponse(BaseModel):
+    token_ok: bool = False
+    eligible: bool = False
+    reason: str | None = None
+    coupon_state: str | None = None
+    promo_id: str | None = None
+    status: int | None = None
+    email: str | None = None
+    account_id: str | None = None
+    plan_type: str | None = None
+    phone_number: str | None = None
+    phone_verified: bool | None = None
+    reg_type: str | None = None
+    jwt_expired: bool = False
+    jwt_exp_ms: int | None = None
+    jwt_exp_in_sec: int | None = None
+    upi_eligible: bool | None = None
+    upi_eligible_reason: str | None = None
+    gcash_eligible: bool | None = None
+    gcash_eligible_reason: str | None = None
+    ideal_eligible: bool | None = None
+    ideal_eligible_reason: str | None = None
+    error: str | None = None
+
+
 class ProxyCheckRequest(BaseModel):
     proxies: str = Field(min_length=1)
     protocol: Literal["http", "socks5", "socks5h"] = "http"

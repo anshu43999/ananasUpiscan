@@ -2,6 +2,35 @@
 
 Supported extraction channels: UPI, iDEAL, MoMo, Kakao, and 直卡.
 
+## Account Eligibility Check
+
+The local extraction page can batch-check the Access Tokens entered in the
+`Access Token` field before submitting extraction jobs. The frontend calls the
+local backend endpoint:
+
+```text
+POST /api/account-eligibility-check
+```
+
+The backend forwards the check server-to-server to:
+
+```text
+https://cha.nerver.cc/api/v1/check
+```
+
+Default payload:
+
+```json
+{"token":"<access_token>","promoId":"plus-1-month-free"}
+```
+
+Optional server-side overrides:
+
+```text
+ACCOUNT_CHECK_API_URL=https://cha.nerver.cc/api/v1/check
+ACCOUNT_CHECK_TIMEOUT=30
+```
+
 ## Ready Plus Third-party Tasks
 
 The page also includes a separate `第三方开通` panel. This feature submits
