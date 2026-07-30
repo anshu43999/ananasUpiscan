@@ -89,6 +89,7 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
   const [status, setStatus] = useState<StatusFilter>('active');
   const [eligibility, setEligibility] = useState<EligibilityFilter>('');
   const [importText, setImportText] = useState('');
+  const [importOpen, setImportOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -149,6 +150,7 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
     await runAction(async () => {
       const result = await importAccounts(importText);
       setImportText('');
+      setImportOpen(false);
       await loadData();
       return `已导入/更新 ${result.imported} 个账号`;
     });
@@ -264,18 +266,26 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
             <h2 className="text-base font-semibold text-gray-900">账号库</h2>
             <p className="mt-1 text-sm text-gray-500">管理可用于提取的 ChatGPT 账号、AT、资格和健康状态。</p>
           </div>
-          <div className="grid grid-cols-2 gap-2 text-right sm:grid-cols-5">
-            <Metric label="总数" value={stats?.total ?? 0} />
-            <Metric label="可用" value={stats?.active ?? 0} />
-            <Metric label="有 AT" value={stats?.with_access_token ?? 0} />
-            <Metric label="资格通过" value={stats?.eligible ?? 0} tone="emerald" />
-            <Metric label="健康" value={stats?.healthy ?? 0} tone="sky" />
+          <div className="flex flex-wrap items-start justify-end gap-3">
+            <div className="grid grid-cols-2 gap-2 text-right sm:grid-cols-5">
+              <Metric label="总数" value={stats?.total ?? 0} />
+              <Metric label="可用" value={stats?.active ?? 0} />
+              <Metric label="有 AT" value={stats?.with_access_token ?? 0} />
+              <Metric label="资格通过" value={stats?.eligible ?? 0} tone="emerald" />
+              <Metric label="健康" value={stats?.healthy ?? 0} tone="sky" />
+            </div>
+            <button
+              type="button"
+              onClick={() => setImportOpen(true)}
+              className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800"
+            >
+              导入账号
+            </button>
           </div>
         </div>
       </section>
 
-      <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_420px]">
-        <div className="space-y-4 rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <section className="space-y-4 rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-center gap-2">
             <input
               value={search}
@@ -366,27 +376,57 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
               )}
             </div>
           </div>
-        </div>
-
-        <aside className="space-y-4 rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900">导入账号</h3>
-            <p className="mt-1 text-xs leading-5 text-gray-500">
-              支持一行一个 AT、Session JSON、数组 JSON、邮箱四段格式。导入时会尽量从 JWT 中解析邮箱、账号 ID 和套餐。
-            </p>
-          </div>
-          <textarea
-            value={importText}
-            onChange={(event) => setImportText(event.target.value)}
-            rows={12}
-            placeholder="粘贴 AT / Session JSON / email----password----...----access_token"
-            className="w-full resize-y rounded-lg border border-gray-300 px-3 py-2 font-mono text-xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
-          />
-          <button type="button" onClick={() => void handleImport()} disabled={working || !importText.trim()} className="w-full rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 disabled:bg-gray-300">
-            {working ? '处理中...' : '导入账号库'}
-          </button>
-        </aside>
       </section>
+
+      {importOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/45 px-4 py-6">
+          <div className="w-full max-w-3xl rounded-lg border border-gray-200 bg-white shadow-xl">
+            <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
+              <div>
+                <h3 className="text-base font-semibold text-gray-900">导入账号</h3>
+                <p className="mt-1 text-xs leading-5 text-gray-500">
+                  支持一行一个 AT、Session JSON、数组 JSON、邮箱四段格式。导入时会从 JWT 中解析邮箱、账号 ID 和套餐。
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setImportOpen(false)}
+                disabled={working}
+                className="rounded-md border border-gray-200 px-2.5 py-1 text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:text-gray-300"
+              >
+                关闭
+              </button>
+            </div>
+            <div className="space-y-4 px-5 py-4">
+              <textarea
+                value={importText}
+                onChange={(event) => setImportText(event.target.value)}
+                rows={14}
+                placeholder="粘贴 AT / Session JSON / email----password----...----access_token"
+                className="max-h-[56vh] w-full resize-y rounded-lg border border-gray-300 px-3 py-2 font-mono text-xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
+              />
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setImportOpen(false)}
+                  disabled={working}
+                  className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:text-gray-300"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleImport()}
+                  disabled={working || !importText.trim()}
+                  className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 disabled:bg-gray-300"
+                >
+                  {working ? '处理中...' : '导入账号库'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
