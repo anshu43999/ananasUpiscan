@@ -1746,11 +1746,9 @@ export function LinkExtract({ injectedAccessTokens = '', launchRequest = null }:
                               <div className="flex flex-wrap gap-x-4 gap-y-1">
                                 <span>邮箱：{item.result.email || '-'}</span>
                                 <span>套餐：{item.result.plan_type || '-'}</span>
-                                <span>优惠：{item.result.coupon_state || item.result.reason || '-'}</span>
+                                <span>支付资格：{item.result.eligible ? '可用' : (item.result.reason || '不可用')}</span>
+                                <span>优惠状态：{item.result.coupon_state || '-'}</span>
                                 <span>过期：{item.result.jwt_expired ? '是' : '否'}</span>
-                              </div>
-                              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
-                                <span>公共资格：{item.result.eligible ? '可用' : (item.result.reason || item.result.coupon_state || '不可用')}</span>
                               </div>
                               <div className="mt-1 break-all font-mono text-gray-500">
                                 account_id: {item.result.account_id || '-'}

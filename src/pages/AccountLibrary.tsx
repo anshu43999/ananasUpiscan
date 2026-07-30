@@ -90,6 +90,7 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
   const [eligibility, setEligibility] = useState<EligibilityFilter>('');
   const [importText, setImportText] = useState('');
   const [importOpen, setImportOpen] = useState(false);
+  const [quickMethods, setQuickMethods] = useState<Record<number, PaymentMethod>>({});
   const [loading, setLoading] = useState(false);
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -190,6 +191,10 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
     });
   }, [onUseTokens, runAction]);
 
+  const quickMethodFor = useCallback((accountId: number): PaymentMethod => {
+    return quickMethods[accountId] || 'upi';
+  }, [quickMethods]);
+
   const handleEligibilityCheck = useCallback(async () => {
     const ids = selectedIdList();
     if (ids.length === 0) {
@@ -264,15 +269,15 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h2 className="text-base font-semibold text-gray-900">账号库</h2>
-            <p className="mt-1 text-sm text-gray-500">管理可用于提取的 ChatGPT 账号、AT、资格和健康状态。</p>
+            <p className="mt-1 text-sm text-gray-500">管理 ChatGPT 账号、AT 健康状态和支付资格。</p>
           </div>
           <div className="flex flex-wrap items-start justify-end gap-3">
             <div className="grid grid-cols-2 gap-2 text-right sm:grid-cols-5">
               <Metric label="总数" value={stats?.total ?? 0} />
               <Metric label="可用" value={stats?.active ?? 0} />
               <Metric label="有 AT" value={stats?.with_access_token ?? 0} />
-              <Metric label="资格通过" value={stats?.eligible ?? 0} tone="emerald" />
-              <Metric label="健康" value={stats?.healthy ?? 0} tone="sky" />
+              <Metric label="支付可用" value={stats?.eligible ?? 0} tone="emerald" />
+              <Metric label="AT 健康" value={stats?.healthy ?? 0} tone="sky" />
             </div>
             <button
               type="button"
@@ -285,39 +290,39 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
         </div>
       </section>
 
-      <section className="space-y-4 rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <section className="space-y-3 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <div className="flex flex-wrap items-center gap-2">
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="搜索邮箱、账号 ID、备注"
-              className="min-w-56 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
+              className="min-w-64 flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
             />
-            <select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500">
+            <select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)} className="rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500">
               <option value="active">可用账号</option>
               <option value="archived">已归档</option>
               <option value="all">全部状态</option>
             </select>
-            <select value={eligibility} onChange={(event) => setEligibility(event.target.value as EligibilityFilter)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500">
-              <option value="">全部资格</option>
+            <select value={eligibility} onChange={(event) => setEligibility(event.target.value as EligibilityFilter)} className="rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500">
+              <option value="">全部支付资格</option>
               <option value="eligible">可提取</option>
               <option value="not_eligible">不可用</option>
               <option value="failed">检测失败</option>
               <option value="unknown">未检测</option>
             </select>
-            <button type="button" onClick={() => void loadData()} disabled={loading} className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:text-gray-300">
+            <button type="button" onClick={() => void loadData()} disabled={loading} className="rounded-md border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:text-gray-300">
               {loading ? '刷新中...' : '刷新'}
             </button>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
             <label className="flex items-center gap-2 text-sm text-gray-700">
               <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} />
               已选 {selectedIds.size} 个，含 AT {selectedTokenCount} 个
             </label>
             <div className="flex flex-wrap gap-2">
-              <ActionButton onClick={() => void handleEligibilityCheck()} disabled={working || selectedIds.size === 0} tone="emerald">资格检测</ActionButton>
-              <ActionButton onClick={() => void handleHealthCheck()} disabled={working || selectedIds.size === 0} tone="sky">健康检测</ActionButton>
+              <ActionButton onClick={() => void handleEligibilityCheck()} disabled={working || selectedIds.size === 0} tone="emerald">支付资格</ActionButton>
+              <ActionButton onClick={() => void handleHealthCheck()} disabled={working || selectedIds.size === 0} tone="sky">AT 健康</ActionButton>
               <ActionButton onClick={() => void handleExportTokens(false, true)} disabled={working || selectedIds.size === 0}>加入提取</ActionButton>
               <ActionButton onClick={() => void handleExportTokens(true, true)} disabled={working || selectedIds.size === 0}>仅通过加入</ActionButton>
               <ActionButton onClick={() => void handleExportTokens(false, false)} disabled={working || selectedIds.size === 0}>复制 AT</ActionButton>
@@ -330,21 +335,21 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
           {error && <div className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
           {message && <div className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{message}</div>}
 
-          <div className="overflow-hidden rounded-lg border border-gray-200">
-            <div className="grid grid-cols-[36px_minmax(220px,1.4fr)_120px_130px_120px_minmax(210px,0.9fr)] border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-500">
+          <div className="overflow-x-auto rounded-md border border-gray-200">
+            <div className="grid min-w-[900px] grid-cols-[36px_minmax(260px,1.7fr)_112px_120px_136px_180px] border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-500">
               <div />
               <div>账号</div>
-              <div>健康</div>
-              <div>资格</div>
+              <div>AT 健康</div>
+              <div>支付资格</div>
               <div>更新时间</div>
-              <div>快速提炼</div>
+              <div>提炼链路</div>
             </div>
-            <div className="max-h-[560px] overflow-auto">
+            <div className="max-h-[64vh] min-h-[320px] min-w-[900px] overflow-y-auto">
               {accounts.length === 0 ? (
                 <div className="px-4 py-12 text-center text-sm text-gray-500">暂无账号。</div>
               ) : (
                 accounts.map((account) => (
-                  <div key={account.id} className="grid grid-cols-[36px_minmax(220px,1.4fr)_120px_130px_120px_minmax(210px,0.9fr)] items-center border-b border-gray-100 px-3 py-3 text-sm hover:bg-gray-50">
+                  <div key={account.id} className="grid grid-cols-[36px_minmax(260px,1.7fr)_112px_120px_136px_180px] items-center border-b border-gray-100 px-3 py-2.5 text-sm hover:bg-gray-50">
                     <div>
                       <input type="checkbox" checked={selectedIds.has(account.id)} onChange={() => toggleSelected(account.id)} />
                     </div>
@@ -358,18 +363,30 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
                     <StatusBadge value={account.health_status} labels={healthLabels} classes={healthClasses} message={account.health_error} />
                     <StatusBadge value={account.eligibility_status} labels={eligibilityLabels} classes={eligibilityClasses} message={account.eligibility_reason} />
                     <div className="text-xs text-gray-500">{formatTime(account.updated_at)}</div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {QUICK_EXTRACT_METHODS.map((method) => (
-                        <button
-                          key={`${account.id}-${method.value}`}
-                          type="button"
-                          onClick={() => void handleQuickExtract(account, method.value)}
-                          disabled={working || !account.has_access_token}
-                          className="rounded-md border border-gray-200 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-white disabled:cursor-not-allowed disabled:text-gray-300"
-                        >
-                          {method.label}
-                        </button>
-                      ))}
+                    <div className="flex items-center gap-1.5">
+                      <select
+                        value={quickMethodFor(account.id)}
+                        onChange={(event) => {
+                          const value = event.target.value as PaymentMethod;
+                          setQuickMethods((current) => ({ ...current, [account.id]: value }));
+                        }}
+                        disabled={working || !account.has_access_token}
+                        className="h-8 min-w-0 flex-1 rounded-md border border-gray-200 bg-white px-2 text-xs text-gray-700 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500 disabled:bg-gray-50 disabled:text-gray-300"
+                      >
+                        {QUICK_EXTRACT_METHODS.map((method) => (
+                          <option key={`${account.id}-${method.value}`} value={method.value}>
+                            {method.label}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => void handleQuickExtract(account, quickMethodFor(account.id))}
+                        disabled={working || !account.has_access_token}
+                        className="h-8 rounded-md border border-gray-200 px-2.5 text-xs font-medium text-gray-700 hover:bg-white disabled:cursor-not-allowed disabled:text-gray-300"
+                      >
+                        使用
+                      </button>
                     </div>
                   </div>
                 ))
