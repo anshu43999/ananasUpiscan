@@ -235,12 +235,6 @@ function accountEligibilityClass(result: AccountEligibilityCheckResponse): strin
   return 'border-amber-200 bg-amber-50 text-amber-700';
 }
 
-function channelEligibilityText(value: boolean | null | undefined, reason?: string | null): string {
-  if (value === true) return '可用';
-  if (value === false) return reason ? `不可用：${reason}` : '不可用';
-  return '-';
-}
-
 function parseReadyPlusSessions(value: string): ReadyPlusParsedSessions {
   const trimmed = value.trim();
   if (!trimmed) return { sessions: [], error: null };
@@ -1730,9 +1724,7 @@ export function LinkExtract({ injectedAccessTokens = '' }: LinkExtractProps) {
                                 <span>过期：{item.result.jwt_expired ? '是' : '否'}</span>
                               </div>
                               <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
-                                <span>UPI：{channelEligibilityText(item.result.upi_eligible, item.result.upi_eligible_reason)}</span>
-                                <span>iDEAL：{channelEligibilityText(item.result.ideal_eligible, item.result.ideal_eligible_reason)}</span>
-                                <span>GCash：{channelEligibilityText(item.result.gcash_eligible, item.result.gcash_eligible_reason)}</span>
+                                <span>公共资格：{item.result.eligible ? '可用' : (item.result.reason || item.result.coupon_state || '不可用')}</span>
                               </div>
                               <div className="mt-1 break-all font-mono text-gray-500">
                                 account_id: {item.result.account_id || '-'}
