@@ -16,6 +16,7 @@ import {
   type AccountLibraryItem,
   type AccountLibraryStatsResponse,
 } from '../api/extract';
+import { BusyNotice } from '../components/BusyNotice';
 import { copyText } from '../utils/clipboard';
 import type { PaymentMethod } from './LinkExtract';
 
@@ -138,6 +139,20 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
   );
   const selectedTokenCount = selectedAccounts.filter((account) => account.has_access_token).length;
   const allVisibleSelected = accounts.length > 0 && accounts.every((account) => selectedIds.has(account.id));
+  const busyLabel = loading
+    ? '正在加载账号库'
+    : editLoading
+      ? '正在读取账号详情'
+      : working
+        ? '正在处理账号操作'
+        : '';
+  const busyDetail = loading
+    ? '正在同步账号列表和统计数据'
+    : editLoading
+      ? '正在获取完整 AT、密码和 Session JSON'
+      : working
+        ? '请保持页面打开，完成后会自动刷新结果'
+        : '';
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -343,6 +358,8 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
 
   return (
     <div className="space-y-5">
+      <BusyNotice active={Boolean(busyLabel)} label={busyLabel} detail={busyDetail} />
+
       <section className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>

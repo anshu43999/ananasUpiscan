@@ -24,6 +24,7 @@ import {
   type ReadyPlusTaskSubmitResponse,
   type StartExtractOptions,
 } from '../api/extract';
+import { BusyNotice } from '../components/BusyNotice';
 import { copyText } from '../utils/clipboard';
 
 const STATUS_LABELS: Record<string, string> = {
@@ -745,6 +746,34 @@ export function LinkExtract({ injectedAccessTokens = '', launchRequest = null }:
   const hasFinishedJobs = jobs.some(
     (item) => item.status === 'completed' || item.status === 'failed' || item.status === 'cancelled',
   );
+  const busyLabel = loading
+    ? '正在提交提取任务'
+    : activeCount > 0
+      ? `正在运行 ${activeCount} 个提取任务`
+      : accountEligibilityLoading
+        ? '正在检测账号资格'
+        : momoPermissionLoading
+          ? '正在检测 MoMo 权限'
+          : readyPlusSubmitting
+            ? '正在提交第三方任务'
+            : readyPlusPolling
+              ? '正在轮询第三方任务'
+              : readyPlusRecentLoading
+                ? '正在读取第三方最近任务'
+                : readyPlusDownloading.size > 0
+                  ? '正在获取第三方结果文件'
+                  : proxyCheckLoading
+                    ? '正在检测代理可用性'
+                    : testLoading
+                      ? '正在测试当前代理链路'
+                      : momoPermissionSubmitting.size > 0
+                        ? '正在提交 MoMo 提取任务'
+                        : '';
+  const busyDetail = activeCount > 0
+    ? '后端正在执行，日志和结果会实时更新'
+    : busyLabel
+      ? '请保持页面打开，操作完成后状态会自动更新'
+      : '';
 
   const handleSubmit = useCallback(
     async (event: React.FormEvent) => {
@@ -1174,6 +1203,8 @@ export function LinkExtract({ injectedAccessTokens = '', launchRequest = null }:
 
   return (
     <div className="mx-auto max-w-7xl space-y-5">
+      <BusyNotice active={Boolean(busyLabel)} label={busyLabel} detail={busyDetail} />
+
       <section className="rounded-lg border border-gray-200 bg-white p-1 shadow-sm">
         <div className="grid gap-1 sm:grid-cols-2">
           <button
