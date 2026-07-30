@@ -12,13 +12,11 @@ local backend endpoint:
 POST /api/account-eligibility-check
 ```
 
-The backend forwards the check server-to-server to:
+The backend performs the check locally. It decodes the JWT payload to show
+account metadata, then runs a server-side ChatGPT checkout preflight with the
+configured promotion. It does not call a third-party eligibility service.
 
-```text
-https://cha.nerver.cc/api/v1/check
-```
-
-Default payload:
+Default local payload:
 
 ```json
 {"token":"<access_token>","promoId":"plus-1-month-free"}
@@ -27,8 +25,13 @@ Default payload:
 Optional server-side overrides:
 
 ```text
-ACCOUNT_CHECK_API_URL=https://cha.nerver.cc/api/v1/check
 ACCOUNT_CHECK_TIMEOUT=30
+ACCOUNT_CHECK_MAX_ATTEMPTS=2
+ACCOUNT_CHECK_COUNTRY=KR
+ACCOUNT_CHECK_CURRENCY=KRW
+ACCOUNT_CHECK_PROXY=
+ACCOUNT_CHECK_PRE_PROXY=
+ACCOUNT_CHECK_DUMP=false
 ```
 
 ## Ready Plus Third-party Tasks

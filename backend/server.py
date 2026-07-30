@@ -15,6 +15,21 @@ from .job_manager import JobManager
 from .models import (
     AccountEligibilityCheckRequest,
     AccountEligibilityCheckResponse,
+    AccountLibraryCheckRequest,
+    AccountLibraryCheckResponse,
+    AccountLibraryDetail,
+    AccountLibraryExportTokenRequest,
+    AccountLibraryExportTokenResponse,
+    AccountLibraryExportJsonRequest,
+    AccountLibraryExportJsonResponse,
+    AccountLibraryHealthRequest,
+    AccountLibraryHealthResponse,
+    AccountLibraryIdsRequest,
+    AccountLibraryImportRequest,
+    AccountLibraryImportResponse,
+    AccountLibraryListResponse,
+    AccountLibraryMutateResponse,
+    AccountLibraryStatsResponse,
     ExtractJobCreate,
     ExtractJobCreated,
     ExtractJobSnapshot,
@@ -28,6 +43,7 @@ from .models import (
     ReadyPlusTaskSubmitRequest,
     ReadyPlusTaskSubmitResponse,
 )
+from . import account_library
 from .account_check import check_account_eligibility
 from .extractor.context import ExtractionContext
 from .extractor.extract import config_from_env, load_token
@@ -96,6 +112,91 @@ async def proxy_chain_test() -> ProxyChainTestResult:
 async def account_eligibility_check(request: AccountEligibilityCheckRequest) -> AccountEligibilityCheckResponse:
     payload = await asyncio.to_thread(check_account_eligibility, request.token, request.promo_id)
     return AccountEligibilityCheckResponse(**payload)
+
+
+@app.get("/api/accounts", response_model=AccountLibraryListResponse)
+async def list_account_library(
+    search: str = "",
+    status: str = "active",
+    eligibility: str = "",
+    limit: int = Query(default=500, ge=1, le=2000),
+) -> AccountLibraryListResponse:
+    payload = await asyncio.to_thread(account_library.list_accounts, search, status, eligibility, limit)
+    return AccountLibraryListResponse(**payload)
+
+
+@app.get("/api/accounts/stats", response_model=AccountLibraryStatsResponse)
+async def account_library_stats() -> AccountLibraryStatsResponse:
+    payload = await asyncio.to_thread(account_library.stats)
+    return AccountLibraryStatsResponse(**payload)
+
+
+@app.post("/api/accounts/import", response_model=AccountLibraryImportResponse)
+async def import_account_library(request: AccountLibraryImportRequest) -> AccountLibraryImportResponse:
+    payload = await asyncio.to_thread(account_library.import_accounts, request.text, request.default_channel)
+    return AccountLibraryImportResponse(**payload)
+
+
+@app.get("/api/accounts/{account_id}", response_model=AccountLibraryDetail)
+async def get_account_library_item(account_id: int) -> AccountLibraryDetail:
+    payload = await asyncio.to_thread(account_library.get_account, account_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="account not found")
+    return AccountLibraryDetail(**payload)
+
+
+@app.post("/api/accounts/{account_id}/archive", response_model=AccountLibraryMutateResponse)
+async def archive_account_library_item(account_id: int) -> AccountLibraryMutateResponse:
+    payload = await asyncio.to_thread(account_library.set_status, [account_id], "archived")
+    return AccountLibraryMutateResponse(**payload)
+
+
+@app.post("/api/accounts/{account_id}/restore", response_model=AccountLibraryMutateResponse)
+async def restore_account_library_item(account_id: int) -> AccountLibraryMutateResponse:
+    payload = await asyncio.to_thread(account_library.set_status, [account_id], "active")
+    return AccountLibraryMutateResponse(**payload)
+
+
+@app.delete("/api/accounts/{account_id}", response_model=AccountLibraryMutateResponse)
+async def delete_account_library_item(account_id: int) -> AccountLibraryMutateResponse:
+    payload = await asyncio.to_thread(account_library.delete_accounts, [account_id])
+    return AccountLibraryMutateResponse(**payload)
+
+
+@app.post("/api/accounts-bulk/archive", response_model=AccountLibraryMutateResponse)
+async def archive_account_library_items(request: AccountLibraryIdsRequest) -> AccountLibraryMutateResponse:
+    payload = await asyncio.to_thread(account_library.set_status, request.ids, "archived")
+    return AccountLibraryMutateResponse(**payload)
+
+
+@app.post("/api/accounts-bulk/delete", response_model=AccountLibraryMutateResponse)
+async def delete_account_library_items(request: AccountLibraryIdsRequest) -> AccountLibraryMutateResponse:
+    payload = await asyncio.to_thread(account_library.delete_accounts, request.ids)
+    return AccountLibraryMutateResponse(**payload)
+
+
+@app.post("/api/accounts-bulk/export-tokens", response_model=AccountLibraryExportTokenResponse)
+async def export_account_library_tokens(request: AccountLibraryExportTokenRequest) -> AccountLibraryExportTokenResponse:
+    payload = await asyncio.to_thread(account_library.export_tokens, request.ids or None, only_eligible=request.only_eligible)
+    return AccountLibraryExportTokenResponse(**payload)
+
+
+@app.post("/api/accounts-bulk/check-eligibility", response_model=AccountLibraryCheckResponse)
+async def check_account_library_items(request: AccountLibraryCheckRequest) -> AccountLibraryCheckResponse:
+    payload = await asyncio.to_thread(account_library.check_accounts, request.ids, request.promo_id, request.concurrency)
+    return AccountLibraryCheckResponse(**payload)
+
+
+@app.post("/api/accounts-bulk/check-health", response_model=AccountLibraryHealthResponse)
+async def check_account_library_health(request: AccountLibraryHealthRequest) -> AccountLibraryHealthResponse:
+    payload = await asyncio.to_thread(account_library.check_health, request.ids, request.concurrency)
+    return AccountLibraryHealthResponse(**payload)
+
+
+@app.post("/api/accounts-bulk/export-json", response_model=AccountLibraryExportJsonResponse)
+async def export_account_library_json(request: AccountLibraryExportJsonRequest) -> AccountLibraryExportJsonResponse:
+    payload = await asyncio.to_thread(account_library.export_json, request.ids or None, include_secrets=request.include_secrets)
+    return AccountLibraryExportJsonResponse(**payload)
 
 
 def _ready_plus_error(exc: Exception) -> HTTPException:

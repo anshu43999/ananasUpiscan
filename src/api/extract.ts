@@ -185,6 +185,158 @@ export function checkAccountEligibility(
   });
 }
 
+export interface AccountLibraryItem {
+  id: number;
+  account_key: string;
+  account_id?: string | null;
+  email?: string | null;
+  plan_type?: string | null;
+  status: string;
+  source?: string | null;
+  channels: string[];
+  eligibility_status: string;
+  eligibility_reason?: string | null;
+  eligibility?: Record<string, unknown>;
+  last_checked_at?: string | null;
+  health_status: string;
+  health_checked_at?: string | null;
+  health_source?: string | null;
+  health_error?: string | null;
+  health?: Record<string, unknown>;
+  note?: string | null;
+  has_access_token: boolean;
+  access_token_preview?: string | null;
+  has_password: boolean;
+  has_session_json: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AccountLibraryDetail extends AccountLibraryItem {
+  access_token?: string | null;
+  password?: string | null;
+  session_json?: string | null;
+}
+
+export interface AccountLibraryListResponse {
+  ok: boolean;
+  total: number;
+  items: AccountLibraryItem[];
+}
+
+export interface AccountLibraryImportResponse {
+  ok: boolean;
+  imported: number;
+  items: AccountLibraryItem[];
+}
+
+export interface AccountLibraryStatsResponse {
+  ok: boolean;
+  total: number;
+  active: number;
+  eligible: number;
+  with_access_token: number;
+  healthy: number;
+}
+
+export interface AccountLibraryMutateResponse {
+  ok: boolean;
+  updated: number;
+  deleted: number;
+}
+
+export interface AccountLibraryExportTokenResponse {
+  ok: boolean;
+  count: number;
+  text: string;
+  items: AccountLibraryItem[];
+}
+
+export interface AccountLibraryCheckResponse {
+  ok: boolean;
+  checked: number;
+  items: AccountLibraryDetail[];
+}
+
+export interface AccountLibraryHealthResponse {
+  ok: boolean;
+  checked: number;
+  counts: Record<string, number>;
+  items: AccountLibraryDetail[];
+}
+
+export interface AccountLibraryExportJsonResponse {
+  ok: boolean;
+  count: number;
+  items: Array<Record<string, unknown>>;
+  text: string;
+}
+
+export function listAccounts(
+  options: { search?: string; status?: string; eligibility?: string; limit?: number } = {},
+): Promise<AccountLibraryListResponse> {
+  const params = new URLSearchParams();
+  if (options.search) params.set('search', options.search);
+  if (options.status) params.set('status', options.status);
+  if (options.eligibility) params.set('eligibility', options.eligibility);
+  if (options.limit) params.set('limit', String(options.limit));
+  const query = params.toString();
+  return extractFetch(`/api/accounts${query ? `?${query}` : ''}`);
+}
+
+export function getAccountStats(): Promise<AccountLibraryStatsResponse> {
+  return extractFetch('/api/accounts/stats');
+}
+
+export function importAccounts(text: string, defaultChannel = ''): Promise<AccountLibraryImportResponse> {
+  return extractFetch('/api/accounts/import', {
+    method: 'POST',
+    body: JSON.stringify({ text, default_channel: defaultChannel }),
+  });
+}
+
+export function exportAccountTokens(ids: number[], onlyEligible = false): Promise<AccountLibraryExportTokenResponse> {
+  return extractFetch('/api/accounts-bulk/export-tokens', {
+    method: 'POST',
+    body: JSON.stringify({ ids, only_eligible: onlyEligible }),
+  });
+}
+
+export function checkStoredAccountEligibility(ids: number[]): Promise<AccountLibraryCheckResponse> {
+  return extractFetch('/api/accounts-bulk/check-eligibility', {
+    method: 'POST',
+    body: JSON.stringify({ ids, promo_id: 'plus-1-month-free', concurrency: 3 }),
+  });
+}
+
+export function checkStoredAccountHealth(ids: number[]): Promise<AccountLibraryHealthResponse> {
+  return extractFetch('/api/accounts-bulk/check-health', {
+    method: 'POST',
+    body: JSON.stringify({ ids, concurrency: 8 }),
+  });
+}
+
+export function exportAccountJson(ids: number[], includeSecrets = false): Promise<AccountLibraryExportJsonResponse> {
+  return extractFetch('/api/accounts-bulk/export-json', {
+    method: 'POST',
+    body: JSON.stringify({ ids, include_secrets: includeSecrets }),
+  });
+}
+
+export function archiveAccounts(ids: number[]): Promise<AccountLibraryMutateResponse> {
+  return extractFetch('/api/accounts-bulk/archive', {
+    method: 'POST',
+    body: JSON.stringify({ ids }),
+  });
+}
+
+export function deleteAccounts(ids: number[]): Promise<AccountLibraryMutateResponse> {
+  return extractFetch('/api/accounts-bulk/delete', {
+    method: 'POST',
+    body: JSON.stringify({ ids }),
+  });
+}
+
 export interface ReadyPlusTaskSubmitItem {
   client_ref: string;
   session_json: unknown;

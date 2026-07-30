@@ -589,7 +589,11 @@ function ExtractJobCard({ job, onCancel, onRemove }: ExtractJobCardProps) {
   );
 }
 
-export function LinkExtract() {
+interface LinkExtractProps {
+  injectedAccessTokens?: string;
+}
+
+export function LinkExtract({ injectedAccessTokens = '' }: LinkExtractProps) {
   const { jobs, loading, error, activeCount, submit, cancel, remove, clearFinished } = useExtractJobs();
   const resultSoundJobRef = useRef<Set<string>>(new Set());
   const resultAudioContextRef = useRef<AudioContext | null>(null);
@@ -641,6 +645,14 @@ export function LinkExtract() {
   const [readyPlusRecentTasks, setReadyPlusRecentTasks] = useState<ReadyPlusTaskSummary[]>([]);
   const [readyPlusRecentLoading, setReadyPlusRecentLoading] = useState(false);
   const [readyPlusRecentError, setReadyPlusRecentError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const next = injectedAccessTokens.trim();
+    if (!next) return;
+    setAccessToken(next);
+    setAccountEligibilityResults([]);
+    setAccountEligibilityError(null);
+  }, [injectedAccessTokens]);
 
   const proxyChain = useMemo(
     () => buildProxyChain(proxyChainMode, manualRegions, paymentMethod),

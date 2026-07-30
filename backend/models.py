@@ -158,6 +158,119 @@ class AccountEligibilityCheckResponse(BaseModel):
     error: str | None = None
 
 
+class AccountLibraryItem(BaseModel):
+    id: int
+    account_key: str
+    account_id: str | None = None
+    email: str | None = None
+    plan_type: str | None = None
+    status: str = "active"
+    source: str | None = None
+    channels: list[str] = Field(default_factory=list)
+    eligibility_status: str = "unknown"
+    eligibility_reason: str | None = None
+    eligibility: dict[str, Any] = Field(default_factory=dict)
+    last_checked_at: str | None = None
+    health_status: str = "unknown"
+    health_checked_at: str | None = None
+    health_source: str | None = None
+    health_error: str | None = None
+    health: dict[str, Any] = Field(default_factory=dict)
+    note: str | None = None
+    has_access_token: bool = False
+    access_token_preview: str | None = None
+    has_password: bool = False
+    has_session_json: bool = False
+    created_at: str
+    updated_at: str
+
+
+class AccountLibraryDetail(AccountLibraryItem):
+    access_token: str | None = None
+    password: str | None = None
+    session_json: str | None = None
+
+
+class AccountLibraryListResponse(BaseModel):
+    ok: bool = True
+    total: int = 0
+    items: list[AccountLibraryItem] = Field(default_factory=list)
+
+
+class AccountLibraryImportRequest(BaseModel):
+    text: str = Field(min_length=1)
+    default_channel: str = ""
+
+
+class AccountLibraryImportResponse(BaseModel):
+    ok: bool = True
+    imported: int = 0
+    items: list[AccountLibraryItem] = Field(default_factory=list)
+
+
+class AccountLibraryIdsRequest(BaseModel):
+    ids: list[int] = Field(default_factory=list)
+
+
+class AccountLibraryExportTokenRequest(AccountLibraryIdsRequest):
+    only_eligible: bool = False
+
+
+class AccountLibraryExportTokenResponse(BaseModel):
+    ok: bool = True
+    count: int = 0
+    text: str = ""
+    items: list[AccountLibraryItem] = Field(default_factory=list)
+
+
+class AccountLibraryCheckRequest(AccountLibraryIdsRequest):
+    promo_id: str = "plus-1-month-free"
+    concurrency: int = Field(default=3, ge=1, le=5)
+
+
+class AccountLibraryCheckResponse(BaseModel):
+    ok: bool = True
+    checked: int = 0
+    items: list[AccountLibraryDetail] = Field(default_factory=list)
+
+
+class AccountLibraryHealthRequest(AccountLibraryIdsRequest):
+    concurrency: int = Field(default=8, ge=1, le=16)
+
+
+class AccountLibraryHealthResponse(BaseModel):
+    ok: bool = True
+    checked: int = 0
+    counts: dict[str, int] = Field(default_factory=dict)
+    items: list[AccountLibraryDetail] = Field(default_factory=list)
+
+
+class AccountLibraryExportJsonRequest(AccountLibraryIdsRequest):
+    include_secrets: bool = False
+
+
+class AccountLibraryExportJsonResponse(BaseModel):
+    ok: bool = True
+    count: int = 0
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    text: str = ""
+
+
+class AccountLibraryMutateResponse(BaseModel):
+    ok: bool = True
+    updated: int = 0
+    deleted: int = 0
+
+
+class AccountLibraryStatsResponse(BaseModel):
+    ok: bool = True
+    total: int = 0
+    active: int = 0
+    eligible: int = 0
+    with_access_token: int = 0
+    healthy: int = 0
+
+
 class ProxyCheckRequest(BaseModel):
     proxies: str = Field(min_length=1)
     protocol: Literal["http", "socks5", "socks5h"] = "http"

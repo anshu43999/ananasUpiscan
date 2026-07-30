@@ -1,10 +1,15 @@
 import { useCallback, useState } from 'react';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LinkExtract } from './pages/LinkExtract';
+import { AccountLibrary } from './pages/AccountLibrary';
 import { getExtractApiBase, setExtractApiBase } from './api/client';
+
+type AppTab = 'extract' | 'accounts';
 
 export default function App() {
   const [extractApiBaseInput, setExtractApiBaseInput] = useState(getExtractApiBase());
+  const [activeTab, setActiveTab] = useState<AppTab>('extract');
+  const [accountLibraryTokens, setAccountLibraryTokens] = useState('');
   const [saved, setSaved] = useState(false);
 
   const handleSaveExtractApiBase = useCallback(() => {
@@ -13,6 +18,11 @@ export default function App() {
     window.setTimeout(() => setSaved(false), 1600);
   }, [extractApiBaseInput]);
 
+  const handleUseAccountTokens = useCallback((tokens: string) => {
+    setAccountLibraryTokens(tokens);
+    setActiveTab('extract');
+  }, []);
+
   return (
     <ErrorBoundary>
       <div className="min-h-screen bg-gray-50">
@@ -20,7 +30,7 @@ export default function App() {
           <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4">
             <div>
               <h1 className="text-lg font-bold text-gray-900">UPIScan</h1>
-              <p className="text-xs text-gray-500">支付链接提取</p>
+              <p className="text-xs text-gray-500">支付链接提取与账号库管理</p>
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <input
@@ -28,7 +38,7 @@ export default function App() {
                 value={extractApiBaseInput}
                 onChange={(event) => setExtractApiBaseInput(event.target.value)}
                 placeholder="链接提取 API 地址，留空使用当前域名"
-                className="w-72 max-w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-xs outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500"
+                className="w-72 max-w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
               />
               <button
                 type="button"
@@ -43,7 +53,36 @@ export default function App() {
         </header>
 
         <main className="mx-auto max-w-6xl px-6 py-6">
-          <LinkExtract />
+          <div className="mb-5 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab('extract')}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold ${
+                activeTab === 'extract'
+                  ? 'bg-gray-900 text-white'
+                  : 'border border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              链接提取
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('accounts')}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold ${
+                activeTab === 'accounts'
+                  ? 'bg-gray-900 text-white'
+                  : 'border border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              账号库
+            </button>
+          </div>
+
+          {activeTab === 'extract' ? (
+            <LinkExtract injectedAccessTokens={accountLibraryTokens} />
+          ) : (
+            <AccountLibrary onUseTokens={handleUseAccountTokens} />
+          )}
         </main>
       </div>
     </ErrorBoundary>
