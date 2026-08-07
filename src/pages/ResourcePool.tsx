@@ -121,6 +121,25 @@ function secondaryValue(item: ResourcePoolItem): string {
   return smsUrlValue(item);
 }
 
+function importLabelFor(target: ResourceTarget): string {
+  if (target === 'proxy_seed') return '代理 Seed 数据';
+  if (target.startsWith('email_')) return '邮箱接码数据';
+  if (target === 'phone_bind') return '绑定手机号接码数据';
+  return '注册手机号接码数据';
+}
+
+function primaryHeaderFor(target: ResourceTarget): string {
+  if (target === 'proxy_seed') return '代理 Seed';
+  if (target.startsWith('email_')) return '邮箱';
+  return '手机号';
+}
+
+function secondaryHeaderFor(target: ResourceTarget): string {
+  if (target === 'proxy_seed') return '协议 / 风格 / 主机';
+  if (target.startsWith('email_')) return '接码接口 / 邮箱来源';
+  return '接码 URL';
+}
+
 export function ResourcePool() {
   const [target, setTarget] = useState<ResourceTarget>('phone_register');
   const [status, setStatus] = useState<StatusFilter>('all');
@@ -304,7 +323,7 @@ export function ResourcePool() {
           )}
 
           <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-gray-700">{target === 'proxy_seed' ? '代理 Seed 数据' : '手机号接码数据'}</span>
+            <span className="mb-1.5 block text-sm font-medium text-gray-700">{importLabelFor(target)}</span>
             <textarea
               value={importText}
               onChange={(event) => setImportText(event.target.value)}
@@ -378,8 +397,8 @@ export function ResourcePool() {
           <div className="overflow-hidden rounded-lg border border-gray-200">
             <div className="grid grid-cols-[44px_minmax(160px,0.8fr)_minmax(220px,1.3fr)_110px_96px_96px_160px] bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-500">
               <div />
-              <div>{target === 'proxy_seed' ? '代理 Seed' : '手机号'}</div>
-              <div>{target === 'proxy_seed' ? '协议 / 风格 / 主机' : '接码 URL'}</div>
+              <div>{primaryHeaderFor(target)}</div>
+              <div>{secondaryHeaderFor(target)}</div>
               <div>状态</div>
               <div>成功</div>
               <div>失败</div>

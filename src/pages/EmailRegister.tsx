@@ -189,12 +189,12 @@ export function EmailRegister() {
       <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h3 className="text-sm font-semibold text-gray-900">Go batch registration</h3>
-            <p className="mt-1 text-xs text-gray-500">Runs bulk email registration inside the Go worker control plane.</p>
+            <h3 className="text-sm font-semibold text-gray-900">Go 批量注册</h3>
+            <p className="mt-1 text-xs text-gray-500">适合大量邮箱注册任务，调用 Go worker 执行批量控制；少量调试可继续使用下方普通注册。</p>
           </div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <label className="block">
-              <span className="mb-1 block text-xs font-medium text-gray-600">Count</span>
+              <span className="mb-1 block text-xs font-medium text-gray-600">数量</span>
               <input
                 type="number"
                 min={1}
@@ -206,7 +206,7 @@ export function EmailRegister() {
               />
             </label>
             <label className="block">
-              <span className="mb-1 block text-xs font-medium text-gray-600">Concurrent</span>
+              <span className="mb-1 block text-xs font-medium text-gray-600">并发</span>
               <input
                 type="number"
                 min={1}
@@ -223,7 +223,7 @@ export function EmailRegister() {
               disabled={goBatchWorking || goBatchRunning}
               className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:bg-gray-300"
             >
-              {goBatchWorking || goBatchRunning ? 'Running' : 'Start batch'}
+              {goBatchWorking || goBatchRunning ? '运行中' : '启动批量'}
             </button>
             <button
               type="button"
@@ -231,20 +231,20 @@ export function EmailRegister() {
               disabled={goBatchWorking || !goBatchRunning}
               className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:text-gray-300"
             >
-              Cancel
+              取消
             </button>
           </div>
         </div>
         {goBatchSnapshot && (
           <div className="mt-3 grid gap-2 rounded-md border border-gray-100 bg-gray-50 p-3 text-xs text-gray-600 sm:grid-cols-4 lg:grid-cols-8">
-            <div>ID <span className="font-mono text-gray-900">{goBatchSnapshot.batch_id || '-'}</span></div>
-            <div>Queued <span className="font-mono text-gray-900">{String(goBatchData.queued ?? '-')}</span></div>
-            <div>Running <span className="font-mono text-gray-900">{String(goBatchData.running ?? '-')}</span></div>
-            <div>OTP <span className="font-mono text-gray-900">{String(goBatchData.waiting_for_otp ?? '-')}</span></div>
-            <div>OK <span className="font-mono text-emerald-700">{String(goBatchData.succeeded ?? '-')}</span></div>
-            <div>Failed <span className="font-mono text-rose-700">{String(goBatchData.failed ?? '-')}</span></div>
-            <div>Cancelled <span className="font-mono text-gray-900">{String(goBatchData.cancelled ?? '-')}</span></div>
-            <div>Done <span className="font-mono text-gray-900">{String(goBatchData.done ?? false)}</span></div>
+            <div>批次 <span className="font-mono text-gray-900">{goBatchSnapshot.batch_id || '-'}</span></div>
+            <div>排队 <span className="font-mono text-gray-900">{String(goBatchData.queued ?? '-')}</span></div>
+            <div>运行 <span className="font-mono text-gray-900">{String(goBatchData.running ?? '-')}</span></div>
+            <div>等 OTP <span className="font-mono text-gray-900">{String(goBatchData.waiting_for_otp ?? '-')}</span></div>
+            <div>成功 <span className="font-mono text-emerald-700">{String(goBatchData.succeeded ?? '-')}</span></div>
+            <div>失败 <span className="font-mono text-rose-700">{String(goBatchData.failed ?? '-')}</span></div>
+            <div>已取消 <span className="font-mono text-gray-900">{String(goBatchData.cancelled ?? '-')}</span></div>
+            <div>完成 <span className="font-mono text-gray-900">{String(goBatchData.done ?? false)}</span></div>
           </div>
         )}
       </section>

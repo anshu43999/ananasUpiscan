@@ -443,6 +443,9 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
       </section>
 
       <section className="space-y-3 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="rounded-md border border-sky-100 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-900">
+            推荐先选择账号并执行“AT 健康”，再按需要执行“支付资格”或“Plus 校验”。检测通过后，可用“加入提取”把选中的 AT 送到链接提取页。
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <input
               value={search}

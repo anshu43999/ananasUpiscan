@@ -1202,7 +1202,7 @@ export function LinkExtract({ injectedAccessTokens = '', launchRequest = null }:
   }, [clearFinished, jobs]);
 
   return (
-    <div className="mx-auto max-w-7xl space-y-5">
+    <div className="space-y-5">
       <BusyNotice active={Boolean(busyLabel)} label={busyLabel} detail={busyDetail} />
 
       <section className="rounded-lg border border-gray-200 bg-white p-1 shadow-sm">
@@ -1276,6 +1276,11 @@ export function LinkExtract({ injectedAccessTokens = '', launchRequest = null }:
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-500">
           <span className="rounded-full bg-gray-100 px-2.5 py-1 text-gray-700">{activePaymentMethod.route}</span>
           <span>{routeText(paymentMethod)}</span>
+        </div>
+        <div className="mt-4 grid gap-3 rounded-md border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs leading-5 text-emerald-900 md:grid-cols-3">
+          <p><span className="font-semibold">适用场景：</span>已有账号 AT，需要生成对应渠道的支付链接。</p>
+          <p><span className="font-semibold">代理规则：</span>可使用内置代理资源，也可在下方按国家粘贴自定义代理。</p>
+          <p><span className="font-semibold">结果提示：</span>任务完成后会展示链接，并播放一次声音提醒。</p>
         </div>
       </section>
 
