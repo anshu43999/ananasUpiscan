@@ -11,6 +11,10 @@ lerna-debug.log*
 .env
 .env.*
 !.env.example
+data/*.sqlite3
+data/*.sqlite3-*
+data/auth.secret
+.tmp/
 
 # Python cache
 __pycache__/

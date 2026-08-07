@@ -21,6 +21,36 @@ class ExtractJobLog(BaseModel):
     level: LogLevel = "info"
 
 
+class AuthUser(BaseModel):
+    id: int
+    username: str
+    role: str = "admin"
+    status: str = "active"
+    created_at: str = ""
+    last_login_at: str = ""
+
+
+class AuthStatusResponse(BaseModel):
+    initialized: bool
+    registration_open: bool
+
+
+class AuthRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=64)
+    password: str = Field(min_length=8, max_length=256)
+
+
+class AuthSessionResponse(BaseModel):
+    ok: bool = True
+    token: str
+    user: AuthUser
+
+
+class AuthMeResponse(BaseModel):
+    ok: bool = True
+    user: AuthUser
+
+
 class ExtractJobResult(BaseModel):
     url: str
     cs_id: str | None = None
@@ -383,6 +413,10 @@ class EmailRegistrationCreate(BaseModel):
     proxy_seed_region: str = "JP"
     proxy_seed_ttl: int = Field(default=10, ge=1, le=1440)
     proxy_seed_protocol: Literal["socks5", "http", "https"] = "socks5"
+    proxy_precheck_enabled: bool = True
+    proxy_precheck_timeout: int = Field(default=12, ge=2, le=60)
+    proxy_precheck_max_candidates: int = Field(default=100, ge=1, le=500)
+    proxy_precheck_max_fraud_score: int = Field(default=50, ge=0, le=100)
     registration_retry_attempts: int = Field(default=2, ge=1, le=5)
     concurrency: int = Field(default=1, ge=1, le=8)
     headed: bool = False
@@ -487,6 +521,10 @@ class PhoneRegistrationCreate(BaseModel):
     proxy_seed_region: str = "JP"
     proxy_seed_ttl: int = Field(default=10, ge=1, le=1440)
     proxy_seed_protocol: Literal["socks5", "http", "https"] = "socks5"
+    proxy_precheck_enabled: bool = True
+    proxy_precheck_timeout: int = Field(default=12, ge=2, le=60)
+    proxy_precheck_max_candidates: int = Field(default=100, ge=1, le=500)
+    proxy_precheck_max_fraud_score: int = Field(default=50, ge=0, le=100)
     registration_retry_attempts: int = Field(default=2, ge=1, le=5)
     concurrency: int = Field(default=1, ge=1, le=8)
     headed: bool = False
@@ -570,6 +608,10 @@ class OAuthResumeCreate(BaseModel):
     proxy_seed_region: str = "JP"
     proxy_seed_ttl: int = Field(default=10, ge=1, le=1440)
     proxy_seed_protocol: Literal["socks5", "http", "https"] = "socks5"
+    proxy_precheck_enabled: bool = True
+    proxy_precheck_timeout: int = Field(default=12, ge=2, le=60)
+    proxy_precheck_max_candidates: int = Field(default=100, ge=1, le=500)
+    proxy_precheck_max_fraud_score: int = Field(default=50, ge=0, le=100)
     registration_retry_attempts: int = Field(default=2, ge=1, le=5)
     concurrency: int = Field(default=1, ge=1, le=6)
     headed: bool = False

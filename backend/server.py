@@ -5,9 +5,9 @@ import os
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
@@ -33,6 +33,10 @@ from .models import (
     AccountLibraryPlusVerifyResponse,
     AccountLibraryStatsResponse,
     AccountLibraryUpdateRequest,
+    AuthMeResponse,
+    AuthRequest,
+    AuthSessionResponse,
+    AuthStatusResponse,
     EmailRegistrationCreate,
     EmailRegistrationJobCreated,
     EmailRegistrationSnapshot,
@@ -65,6 +69,7 @@ from .models import (
     ResourcePoolStatusRequest,
 )
 from . import account_library
+from . import auth
 from . import resource_pool
 from .account_check import check_account_eligibility
 from .email_registration import email_registration_manager
@@ -99,6 +104,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup() -> None:
+    await asyncio.to_thread(lambda: auth.connect().close())
     await asyncio.to_thread(lambda: account_library.connect().close())
     await asyncio.to_thread(lambda: resource_pool.connect().close())
     await job_manager.start()
@@ -112,6 +118,62 @@ async def shutdown() -> None:
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def _bearer_token(value: str | None) -> str:
+    text = str(value or "").strip()
+    if text.lower().startswith("bearer "):
+        return text[7:].strip()
+    return text
+
+
+def _auth_error(message: str = "未登录或登录已过期") -> JSONResponse:
+    return JSONResponse(status_code=401, content={"detail": message})
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    if request.method == "OPTIONS" or path == "/health" or path.startswith("/api/auth/") or not path.startswith("/api/"):
+        return await call_next(request)
+    user = await asyncio.to_thread(auth.verify_token, _bearer_token(request.headers.get("authorization")))
+    if not user:
+        return _auth_error()
+    request.state.auth_user = user
+    return await call_next(request)
+
+
+@app.get("/api/auth/status", response_model=AuthStatusResponse)
+async def auth_status() -> AuthStatusResponse:
+    return AuthStatusResponse(**await asyncio.to_thread(auth.auth_status))
+
+
+@app.post("/api/auth/register", response_model=AuthSessionResponse)
+async def auth_register(request: AuthRequest) -> AuthSessionResponse:
+    try:
+        payload = await asyncio.to_thread(auth.register_first_admin, request.username, request.password)
+        return AuthSessionResponse(**payload)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/auth/login", response_model=AuthSessionResponse)
+async def auth_login(request: AuthRequest) -> AuthSessionResponse:
+    try:
+        payload = await asyncio.to_thread(auth.login, request.username, request.password)
+        return AuthSessionResponse(**payload)
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+@app.get("/api/auth/me", response_model=AuthMeResponse)
+async def auth_me(request: Request) -> AuthMeResponse:
+    user = await asyncio.to_thread(auth.verify_token, _bearer_token(request.headers.get("authorization")))
+    if not user:
+        raise HTTPException(status_code=401, detail="未登录或登录已过期")
+    return AuthMeResponse(user=user)
 
 
 @app.post("/api/extract/jobs", response_model=ExtractJobCreated)
@@ -601,6 +663,11 @@ async def proxy_check(request: ProxyCheckRequest) -> ProxyCheckResponse:
 
 @app.websocket("/api/extract/jobs/{job_id}/ws")
 async def job_ws(websocket: WebSocket, job_id: str) -> None:
+    token = _bearer_token(websocket.query_params.get("token") or websocket.headers.get("authorization"))
+    user = await asyncio.to_thread(auth.verify_token, token)
+    if not user:
+        await websocket.close(code=1008)
+        return
     snapshot = await job_manager.get_job(job_id)
     if snapshot is None:
         await websocket.close(code=1008)

@@ -1,8 +1,10 @@
-import { useCallback, useMemo, useState } from 'react';
-import { getExtractApiBase, setExtractApiBase } from './api/client';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { getAuthStatus, getCurrentUser } from './api/auth';
+import { AUTH_EXPIRED_EVENT, clearAuthSession, getAuthSession, getExtractApiBase, setExtractApiBase, type AuthSession } from './api/client';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { PageHelp } from './components/PageHelp';
 import { AccountLibrary } from './pages/AccountLibrary';
+import { AuthPage } from './pages/AuthPage';
 import { EmailRegister } from './pages/EmailRegister';
 import { LinkExtract, type LinkExtractLaunchRequest, type PaymentMethod } from './pages/LinkExtract';
 import { OAuthResume } from './pages/OAuthResume';
@@ -144,6 +146,10 @@ export default function App() {
   const [accountLibraryTokens, setAccountLibraryTokens] = useState('');
   const [accountLaunchRequest, setAccountLaunchRequest] = useState<LinkExtractLaunchRequest | null>(null);
   const [saved, setSaved] = useState(false);
+  const [authSession, setAuthSessionState] = useState<AuthSession | null>(() => getAuthSession());
+  const [registrationOpen, setRegistrationOpen] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState('');
 
   const activeGuide = pageGuides[activeTab];
   const flatTabs = useMemo(() => tabGroups.flatMap((group) => group.items), []);
@@ -166,6 +172,78 @@ export default function App() {
     setActiveTab('extract');
   }, []);
 
+  const handleLogout = useCallback(() => {
+    clearAuthSession();
+    setAuthSessionState(null);
+  }, []);
+
+  const handleAuthenticated = useCallback((session: AuthSession) => {
+    setAuthSessionState(session);
+    setRegistrationOpen(false);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function bootstrapAuth() {
+      setAuthLoading(true);
+      setAuthError('');
+      try {
+        const status = await getAuthStatus();
+        if (cancelled) return;
+        setRegistrationOpen(status.registration_open);
+        const savedSession = getAuthSession();
+        if (savedSession?.token && !status.registration_open) {
+          try {
+            const current = await getCurrentUser();
+            if (!cancelled) {
+              setAuthSessionState({ token: savedSession.token, user: current.user });
+            }
+          } catch {
+            clearAuthSession();
+            if (!cancelled) setAuthSessionState(null);
+          }
+        } else if (!savedSession?.token) {
+          setAuthSessionState(null);
+        }
+      } catch (err) {
+        if (!cancelled) setAuthError(err instanceof Error ? err.message : '无法连接后端认证服务');
+      } finally {
+        if (!cancelled) setAuthLoading(false);
+      }
+    }
+    void bootstrapAuth();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const handler = () => setAuthSessionState(null);
+    window.addEventListener(AUTH_EXPIRED_EVENT, handler);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handler);
+  }, []);
+
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-sm font-medium text-slate-200">
+        正在检查登录状态...
+      </div>
+    );
+  }
+
+  if (!authSession) {
+    return (
+      <ErrorBoundary>
+        {authError && (
+          <div className="fixed left-1/2 top-4 z-50 -translate-x-1/2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700 shadow-lg">
+            {authError}
+          </div>
+        )}
+        <AuthPage registrationOpen={registrationOpen} onAuthenticated={handleAuthenticated} />
+      </ErrorBoundary>
+    );
+  }
+
   return (
     <ErrorBoundary>
       <div className="min-h-screen bg-slate-100 text-slate-900">
@@ -176,8 +254,10 @@ export default function App() {
                 <h1 className="text-xl font-bold tracking-tight text-slate-950">UPIScan</h1>
                 <p className="mt-1 text-xs leading-5 text-slate-500">支付链接提取、账号库、资源池和注册链路控制台</p>
               </div>
-              <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 xl:mt-4 xl:inline-flex">
-                后端执行
+              <div className="xl:mt-4">
+                <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                  admin · {authSession.user.username}
+                </div>
               </div>
             </div>
 
@@ -220,6 +300,13 @@ export default function App() {
                 <li>4. 查看日志、复制结果、导出账号</li>
               </ol>
             </div>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="mt-3 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+            >
+              退出登录
+            </button>
           </aside>
 
           <main className="min-w-0 px-4 py-4 sm:px-6 lg:px-8">

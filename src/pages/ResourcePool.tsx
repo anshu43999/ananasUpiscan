@@ -20,7 +20,7 @@ const targetOptions: Array<{ id: ResourceTarget; label: string; hint: string }> 
   { id: 'email_cfworker', label: 'CFWorker Mail', hint: 'Cloudflare Worker / Cloud Mail API mailbox' },
   { id: 'email_icloud_api', label: '邮箱接码池', hint: '邮箱注册和 OAuth 邮箱 OTP 从这里租用接码行' },
   { id: 'email_outlook_token', label: 'Outlook Token 池', hint: '保存 Outlook Graph token 邮箱资源' },
-  { id: 'email_icloud_privacy', label: 'iCloud 隐私邮箱池', hint: '保存 iCloud 隐私邮箱地址资源' },
+  { id: 'email_icloud_privacy', label: 'iCloud 隐私邮箱池', hint: '支持隐私邮箱别名 + code API 接码地址' },
   { id: 'phone_register', label: '注册手机号池', hint: '手机注册链路从这里租用号码' },
   { id: 'phone_bind', label: '绑定手机号池', hint: 'OAuth 续跑遇到 add_phone 时从这里取号' },
   { id: 'proxy_seed', label: '代理 Seed 池', hint: '注册和 OAuth 链路生成 sticky 代理会话' },
@@ -59,6 +59,11 @@ const emailSampleRows = [
 
 const outlookSampleRows = [
   'user@outlook.com----password----client_id----refresh_token',
+].join('\n');
+
+const icloudPrivacySampleRows = [
+  '20_rugs.argot@icloud.com----http://49.51.182.250:8020/api/v1/mailboxes/20_rugs.argot@icloud.com/code?key=YOUR_KEY&keyword=ChatGPT&wait_ms=12000',
+  'alias@icloud.com----code:https://mail.example.com/api/v1/mailboxes/alias@icloud.com/code?key=YOUR_KEY&keyword=ChatGPT&wait_ms=12000',
 ].join('\n');
 
 const forwardedDomainSampleRows = [
@@ -328,7 +333,7 @@ export function ResourcePool() {
               value={importText}
               onChange={(event) => setImportText(event.target.value)}
               rows={12}
-              placeholder={target === 'proxy_seed' ? proxySampleRows : target === 'email_outlook_token' ? outlookSampleRows : target === 'email_forwarded_domain' ? forwardedDomainSampleRows : target === 'email_cfworker' ? cfworkerSampleRows : target.startsWith('email_') ? emailSampleRows : sampleRows}
+              placeholder={target === 'proxy_seed' ? proxySampleRows : target === 'email_outlook_token' ? outlookSampleRows : target === 'email_icloud_privacy' ? icloudPrivacySampleRows : target === 'email_forwarded_domain' ? forwardedDomainSampleRows : target === 'email_cfworker' ? cfworkerSampleRows : target.startsWith('email_') ? emailSampleRows : sampleRows}
               disabled={working}
               className="max-h-[48vh] w-full resize-y rounded-lg border border-gray-300 px-3 py-2 font-mono text-xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500 disabled:bg-gray-50"
             />

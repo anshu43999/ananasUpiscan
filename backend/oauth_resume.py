@@ -16,6 +16,7 @@ from . import account_library, resource_pool
 from .account_check import _extract_access_token
 from .email_registration import LinkApiMailbox
 from .extractor.proxy import normalize_proxy_url, proxy_label
+from .registration_proxy_precheck import filter_clean_proxies
 
 
 VALID_ACCOUNT_HEALTH_STATUSES = {"active", "active_free", "active_plus"}
@@ -108,7 +109,7 @@ class OAuthResumeManager:
             tasks = self._build_tasks(job_id, payload)
             if not tasks:
                 raise RuntimeError("没有可续跑的账号或 resume JSON")
-            proxy_pool = self._registration_proxy_pool(payload, len(tasks))
+            proxy_pool = self._registration_proxy_pool(job_id, payload, len(tasks))
             concurrency = max(1, min(6, int(payload.get("concurrency") or 1), len(tasks)))
             self._patch(job_id, status="running", total=len(tasks))
             self._log(job_id, f"OAuth 绑定/续跑任务开始：{len(tasks)} 个账号，并发 {concurrency}")
@@ -278,8 +279,7 @@ class OAuthResumeManager:
             raise RuntimeError("resume JSON 缺少 browser_storage_state_path")
         return merged
 
-    @staticmethod
-    def _registration_proxy_pool(payload: dict[str, Any], target_count: int = 1) -> list[str]:
+    def _registration_proxy_pool(self, job_id: str, payload: dict[str, Any], target_count: int = 1) -> list[str]:
         raw_items: list[str] = []
         if bool(payload.get("use_proxy_resource_pool")):
             retry_attempts = max(1, min(5, int(payload.get("registration_retry_attempts") or 1)))
@@ -314,7 +314,12 @@ class OAuthResumeManager:
             if normalized and normalized not in seen:
                 seen.add(normalized)
                 proxies.append(normalized)
-        return proxies
+        return filter_clean_proxies(
+            proxies,
+            payload,
+            log=lambda message, level="info": self._log(job_id, message, level),
+            target_count=max(1, int(target_count or 1)),
+        )
 
     @staticmethod
     def _proxy_for_attempt(proxy_pool: list[str], index: int, attempt_no: int, contract: dict[str, Any]) -> str:
@@ -573,6 +578,9 @@ class OAuthResumeManager:
                         "imap_pass": str(data.get("imap_pass") or ""),
                         "imap_host": str(data.get("imap_host") or ""),
                         "imap_port": str(data.get("imap_port") or ""),
+                        "inbox_url": str(data.get("inbox_url") or ""),
+                        "code_url": str(data.get("code_url") or ""),
+                        "mail_url": str(data.get("mail_url") or ""),
                     }
                 elif provider == "forwarded_domain":
                     key, data = resource_pool.parse_forwarded_domain_entries(mailbox_text)[0]
@@ -607,6 +615,9 @@ class OAuthResumeManager:
                     "mailbox_imap_pass": str(provider_row.get("imap_pass") or ""),
                     "mailbox_imap_host": str(provider_row.get("imap_host") or ""),
                     "mailbox_imap_port": str(provider_row.get("imap_port") or ""),
+                    "mailbox_inbox_url": str(provider_row.get("inbox_url") or ""),
+                    "mailbox_code_url": str(provider_row.get("code_url") or ""),
+                    "mailbox_mail_url": str(provider_row.get("mail_url") or ""),
                     "icloud_privacy_order_text": str(provider_row.get("email") or ""),
                     "icloud_privacy_email": str(provider_row.get("email") or ""),
                     "cfworker_api_url": str(provider_row.get("api_url") or ""),

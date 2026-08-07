@@ -20,6 +20,7 @@ import requests
 
 from . import account_library, resource_pool
 from .extractor.proxy import normalize_proxy_url, proxy_label
+from .registration_proxy_precheck import filter_clean_proxies
 
 
 def utc_now() -> str:
@@ -258,8 +259,7 @@ class PhoneRegistrationManager:
                 job.failed += 1
             job.updated_at = utc_now()
 
-    @staticmethod
-    def _registration_proxy_pool(payload: dict[str, Any], target_count: int = 1) -> list[str]:
+    def _registration_proxy_pool(self, job_id: str, payload: dict[str, Any], target_count: int = 1) -> list[str]:
         raw_items: list[str] = []
         if bool(payload.get("use_proxy_resource_pool")):
             retry_attempts = max(1, min(5, int(payload.get("registration_retry_attempts") or 1)))
@@ -293,7 +293,12 @@ class PhoneRegistrationManager:
             if normalized and normalized not in seen:
                 seen.add(normalized)
                 proxies.append(normalized)
-        return proxies
+        return filter_clean_proxies(
+            proxies,
+            payload,
+            log=lambda message, level="info": self._log(job_id, message, level),
+            target_count=max(1, int(target_count or 1)),
+        )
 
     @staticmethod
     def _proxy_for_attempt(proxy_pool: list[str], index: int, attempt_no: int) -> str:
@@ -358,7 +363,7 @@ class PhoneRegistrationManager:
             targets = self._build_targets(payload)
             if not targets:
                 raise RuntimeError("没有可用的手机注册目标")
-            proxy_pool = self._registration_proxy_pool(payload, len(targets))
+            proxy_pool = self._registration_proxy_pool(job_id, payload, len(targets))
             concurrency = max(1, min(8, int(payload.get("concurrency") or 1), len(targets)))
             provider_key = self._sms_provider_key(payload)
             self._patch(job_id, status="running", total=len(targets))

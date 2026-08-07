@@ -15,14 +15,26 @@ from core.mailbox.forwarded_domain import ForwardedDomainMailbox, MailboxAccount
 class ICloudPrivacyMailbox(ForwardedDomainMailbox):
     """Fixed iCloud Hide My Email alias with OTP delivered to a configured IMAP inbox."""
 
-    def __init__(self, order_text: str = "", **kwargs: Any):
+    def __init__(self, order_text: str = "", code_url: str = "", mail_url: str = "", inbox_url: str = "", proxy: str | None = None, poll_interval: int = 3, **kwargs: Any):
         super().__init__(domain="icloud.com", **kwargs)
         self.order_text = str(order_text or "")
+        self.code_url = str(code_url or "").strip()
+        self.mail_url = str(mail_url or "").strip()
+        self.inbox_url = str(inbox_url or "").strip()
+        self.poll_interval = max(1, int(poll_interval or 3))
+        self.session = requests.Session()
+        self.session.trust_env = False
+        self.proxies = {"http": proxy, "https": proxy} if proxy else None
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "ICloudPrivacyMailbox":
         return cls(
             order_text=str(config.get("icloud_privacy_order_text") or config.get("email") or config.get("icloud_privacy_email") or ""),
+            code_url=str(config.get("mailbox_code_url") or ""),
+            mail_url=str(config.get("mailbox_mail_url") or ""),
+            inbox_url=str(config.get("mailbox_inbox_url") or ""),
+            proxy=str(config.get("mailbox_proxy") or config.get("proxy") or "") or None,
+            poll_interval=int(config.get("email_otp_poll_interval") or 3),
             imap_user=str(config.get("mailbox_imap_user") or ""),
             imap_pass=str(config.get("mailbox_imap_pass") or ""),
             imap_host=str(config.get("mailbox_imap_host") or ""),
@@ -45,13 +57,106 @@ class ICloudPrivacyMailbox(ForwardedDomainMailbox):
         if not rows:
             raise RuntimeError("iCloud Privacy mailbox missing email alias.")
         email = rows[0]
-        return MailboxAccount(email=email, account_id=email, extra={"provider_name": "icloud_privacy"})
+        return MailboxAccount(email=email, account_id=email, extra=self._extra())
 
     def account_for_email(self, email: str) -> MailboxAccount:
         target = str(email or "").strip().lower()
         if target:
-            return MailboxAccount(email=target, account_id=target, extra={"provider_name": "icloud_privacy"})
+            return MailboxAccount(email=target, account_id=target, extra=self._extra())
         return self.create_account()
+
+    def _extra(self) -> dict[str, Any]:
+        return {
+            "provider_name": "icloud_privacy",
+            "code_url": self.code_url,
+            "mail_url": self.mail_url,
+            "inbox_url": self.inbox_url,
+        }
+
+    def _has_api_endpoint(self) -> bool:
+        return bool(self.code_url or self.mail_url or self.inbox_url)
+
+    def _fetch_json_url(self, url: str, label: str) -> dict[str, Any]:
+        response = self.session.get(url, params={"_": int(time.time())}, proxies=self.proxies, timeout=15)
+        if response.status_code >= 400:
+            raise RuntimeError(f"{label} API request failed: status={response.status_code}")
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise RuntimeError(f"{label} API did not return JSON: {response.text[:180]}") from exc
+        return data if isinstance(data, dict) else {"data": data}
+
+    @staticmethod
+    def _payload_data(payload: dict[str, Any]) -> dict[str, Any]:
+        data = payload.get("data") if isinstance(payload, dict) else None
+        return data if isinstance(data, dict) else payload
+
+    @staticmethod
+    def _message_marker(data: dict[str, Any]) -> str:
+        raw_id = str(data.get("message_id") or data.get("id") or data.get("emailId") or "").strip()
+        if raw_id:
+            return f"mail-api:{raw_id}"
+        raw = str(data.get("received_at") or data.get("updated_at") or data.get("subject") or data.get("code") or "")
+        return "mail-api:" + str(abs(hash(raw)))
+
+    def _extract_code_from_payload(self, payload: dict[str, Any], code_pattern: str | None = None) -> tuple[str, str]:
+        data = self._payload_data(payload)
+        if data.get("success") is False or data.get("found") is False:
+            return "", self._message_marker(data)
+        raw_code = str(data.get("code") or data.get("verification_code") or data.get("latest_verification_code") or "").strip()
+        source = raw_code or " ".join(str(data.get(field) or "") for field in ("subject", "text", "content", "html", "body", "message"))
+        if code_pattern:
+            match = re.search(code_pattern, source)
+            code = match.group(1) if match and match.groups() else (match.group(0) if match else "")
+        else:
+            code = raw_code or extract_verification_code(source, expected_lengths=(6,))
+        return code, self._message_marker(data)
+
+    def get_current_ids(self, account: MailboxAccount) -> set[str]:
+        if not self._has_api_endpoint():
+            return super().get_current_ids(account)
+        markers: set[str] = set()
+        for url, label in ((self.code_url, "code"), (self.mail_url, "mail")):
+            if not url:
+                continue
+            try:
+                _code, marker = self._extract_code_from_payload(self._fetch_json_url(url, label))
+                if marker:
+                    markers.add(marker)
+            except Exception:
+                pass
+        return markers
+
+    def wait_for_code(
+        self,
+        account: MailboxAccount,
+        *,
+        timeout: int = 180,
+        before_ids: set[str] | None = None,
+        code_pattern: str | None = None,
+    ) -> str:
+        if not self._has_api_endpoint():
+            return super().wait_for_code(account, timeout=timeout, before_ids=before_ids, code_pattern=code_pattern)
+        seen = set(before_ids or set())
+        deadline = time.time() + int(timeout or 180)
+        last_error = ""
+        while time.time() < deadline:
+            for url, label in ((self.code_url, "code"), (self.mail_url, "mail")):
+                if not url:
+                    continue
+                try:
+                    code, marker = self._extract_code_from_payload(self._fetch_json_url(url, label), code_pattern=code_pattern)
+                    if marker and marker not in seen and code:
+                        return code
+                    if marker:
+                        seen.add(marker)
+                    elif code:
+                        return code
+                except Exception as exc:
+                    last_error = str(exc).splitlines()[0][:160]
+            time.sleep(self.poll_interval)
+        detail = f": {last_error}" if last_error else ""
+        raise TimeoutError(f"Timed out waiting for iCloud Privacy mailbox OTP after {timeout}s{detail}")
 
 
 class CFWorkerMailbox:
@@ -233,4 +338,3 @@ class CFWorkerMailbox:
         data = self._json(response, "CFWorker mails")
         items = data.get("results", data)
         return items if isinstance(items, list) else []
-

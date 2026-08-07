@@ -1,4 +1,4 @@
-import { getExtractApiBase } from './client';
+import { getAuthToken, getExtractApiBase, notifyAuthExpired } from './client';
 
 async function extractFetch<T>(
   path: string,
@@ -8,6 +8,7 @@ async function extractFetch<T>(
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {}),
       ...(options.headers as Record<string, string> | undefined),
     },
   });
@@ -29,6 +30,9 @@ async function extractFetch<T>(
       (body as { message?: string }).message ||
       (body as { error?: string }).error ||
       `Request failed (${res.status})`;
+    if (res.status === 401) {
+      notifyAuthExpired();
+    }
     throw new Error(retryAfter ? `${message}；建议 ${retryAfter} 秒后重试` : message);
   }
 
@@ -261,6 +265,10 @@ export interface EmailRegistrationCreateOptions {
   proxy_seed_region?: string;
   proxy_seed_ttl?: number;
   proxy_seed_protocol?: 'socks5' | 'http' | 'https';
+  proxy_precheck_enabled?: boolean;
+  proxy_precheck_timeout?: number;
+  proxy_precheck_max_candidates?: number;
+  proxy_precheck_max_fraud_score?: number;
   registration_retry_attempts?: number;
   concurrency?: number;
   headed?: boolean;
@@ -353,6 +361,10 @@ export interface PhoneRegistrationCreateOptions {
   proxy_seed_region?: string;
   proxy_seed_ttl?: number;
   proxy_seed_protocol?: 'socks5' | 'http' | 'https';
+  proxy_precheck_enabled?: boolean;
+  proxy_precheck_timeout?: number;
+  proxy_precheck_max_candidates?: number;
+  proxy_precheck_max_fraud_score?: number;
   registration_retry_attempts?: number;
   concurrency?: number;
   headed?: boolean;
@@ -430,6 +442,10 @@ export interface OAuthResumeCreateOptions {
   proxy_seed_region?: string;
   proxy_seed_ttl?: number;
   proxy_seed_protocol?: 'socks5' | 'http' | 'https';
+  proxy_precheck_enabled?: boolean;
+  proxy_precheck_timeout?: number;
+  proxy_precheck_max_candidates?: number;
+  proxy_precheck_max_fraud_score?: number;
   registration_retry_attempts?: number;
   concurrency?: number;
   headed?: boolean;
@@ -941,18 +957,25 @@ export function checkProxies(
 export function extractJobWsUrl(jobId: string): string {
   const base = getExtractApiBase();
   const path = `/api/extract/jobs/${jobId}/ws`;
+  const authToken = getAuthToken();
+  const applyToken = (rawUrl: string) => {
+    if (!authToken) return rawUrl;
+    const url = new URL(rawUrl);
+    url.searchParams.set('token', authToken);
+    return url.toString();
+  };
 
   if (!base) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${protocol}//${window.location.host}${path}`;
+    return applyToken(`${protocol}//${window.location.host}${path}`);
   }
 
   if (base.startsWith('http://') || base.startsWith('https://')) {
     const url = new URL(path, base);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-    return url.toString();
+    return applyToken(url.toString());
   }
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${window.location.host}${base}${path}`;
+  return applyToken(`${protocol}//${window.location.host}${base}${path}`);
 }

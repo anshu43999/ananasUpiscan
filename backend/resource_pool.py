@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 
 DB_LOCK = threading.Lock()
@@ -287,7 +288,8 @@ def _classify_mailbox_api_link(value: str, label: str = "") -> str:
     label = str(label or "").strip().lower()
     if not lowered.startswith(("http://", "https://")):
         return ""
-    if label == "code" or "/api/code/" in lowered:
+    path = urlsplit(lowered).path.rstrip("/")
+    if label == "code" or "/api/code/" in lowered or path.endswith("/code"):
         return "code_url"
     if (
         label == "mail"
@@ -379,15 +381,35 @@ def parse_icloud_privacy_entries(text: str | list[str] | tuple[str, ...]) -> lis
         if email in seen:
             continue
         seen.add(email)
-        payload = {"email": email}
-        if len(parts) > 1:
-            payload["imap_user"] = parts[1]
-        if len(parts) > 2:
-            payload["imap_pass"] = parts[2]
-        if len(parts) > 3:
-            payload["imap_host"] = parts[3]
-        if len(parts) > 4:
-            payload["imap_port"] = parts[4]
+        payload = {"email": email, "inbox_url": "", "code_url": "", "mail_url": ""}
+        credential_parts: list[str] = []
+        for part in parts[1:]:
+            if not part:
+                continue
+            label = ""
+            value = part
+            if ":" in part:
+                prefix, suffix = part.split(":", 1)
+                if prefix.strip().lower() in {"show", "inbox", "mail", "code"}:
+                    label = prefix.strip().lower()
+                    value = suffix.strip()
+            kind = _classify_mailbox_api_link(value, label)
+            if kind == "code_url":
+                payload["code_url"] = value
+            elif kind == "mail_url":
+                payload["mail_url"] = value
+            elif kind == "inbox_url" and not payload["inbox_url"]:
+                payload["inbox_url"] = value
+            else:
+                credential_parts.append(part)
+        if credential_parts:
+            payload["imap_user"] = credential_parts[0]
+        if len(credential_parts) > 1:
+            payload["imap_pass"] = credential_parts[1]
+        if len(credential_parts) > 2:
+            payload["imap_host"] = credential_parts[2]
+        if len(credential_parts) > 3:
+            payload["imap_port"] = credential_parts[3]
         entries.append((email, payload))
     if not entries:
         raise ValueError("请至少导入一条 iCloud 隐私邮箱资源")

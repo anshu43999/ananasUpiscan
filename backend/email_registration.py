@@ -17,12 +17,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import requests
 
 from . import account_library, resource_pool
 from .extractor.proxy import normalize_proxy_url, proxy_label
 from .go_email_protocol import normalize_email_protocol_backend, run_go_email_protocol
+from .registration_proxy_precheck import filter_clean_proxies
 
 
 def utc_now() -> str:
@@ -107,7 +109,8 @@ class LinkApiMailbox:
         label = str(label or "").strip().lower()
         if not lowered.startswith(("http://", "https://")):
             return ""
-        if label == "code" or "/api/code/" in lowered:
+        path = urlsplit(lowered).path.rstrip("/")
+        if label == "code" or "/api/code/" in lowered or path.endswith("/code"):
             return "code_url"
         if (
             label == "mail"
@@ -441,7 +444,7 @@ class EmailRegistrationManager:
             rows = self._mailbox_rows_from_payload(job_id, payload)
             if not rows:
                 raise RuntimeError("没有可用邮箱行，请使用 email----收信URL 或 email----code:...----mail:... 格式")
-            proxy_pool = self._registration_proxy_pool(payload, len(rows))
+            proxy_pool = self._registration_proxy_pool(job_id, payload, len(rows))
             concurrency = max(1, min(8, int(payload.get("concurrency") or 1), len(rows)))
             self._patch(job_id, status="running", total=len(rows))
             self._log(job_id, f"邮箱注册任务开始：{len(rows)} 个邮箱，并发 {concurrency}")
@@ -505,6 +508,9 @@ class EmailRegistrationManager:
                             "imap_pass": str(data.get("imap_pass") or ""),
                             "imap_host": str(data.get("imap_host") or ""),
                             "imap_port": str(data.get("imap_port") or ""),
+                            "inbox_url": str(data.get("inbox_url") or ""),
+                            "code_url": str(data.get("code_url") or ""),
+                            "mail_url": str(data.get("mail_url") or ""),
                             "_resource_key": "",
                             "_resource_provider": "icloud_privacy",
                             "_resource_lease_id": "",
@@ -543,8 +549,7 @@ class EmailRegistrationManager:
                 rows.extend(LinkApiMailbox(mailbox_text, proxy=proxy, poll_interval=poll_interval).rows())
         return rows
 
-    @staticmethod
-    def _registration_proxy_pool(payload: dict[str, Any], target_count: int = 1) -> list[str]:
+    def _registration_proxy_pool(self, job_id: str, payload: dict[str, Any], target_count: int = 1) -> list[str]:
         raw_items: list[str] = []
         if bool(payload.get("use_proxy_resource_pool")):
             retry_attempts = max(1, min(5, int(payload.get("registration_retry_attempts") or 1)))
@@ -580,7 +585,12 @@ class EmailRegistrationManager:
                 continue
             seen.add(normalized)
             proxies.append(normalized)
-        return proxies
+        return filter_clean_proxies(
+            proxies,
+            payload,
+            log=lambda message, level="info": self._log(job_id, message, level),
+            target_count=max(1, int(target_count or 1)),
+        )
 
     @staticmethod
     def _proxy_for_attempt(proxy_pool: list[str], index: int, attempt_no: int) -> str:
@@ -613,6 +623,9 @@ class EmailRegistrationManager:
                     "outlook_refresh_token": str(row.get("refresh_token") or ""),
                     "icloud_privacy_order_text": str(row.get("email") or ""),
                     "icloud_privacy_email": str(row.get("email") or ""),
+                    "mailbox_inbox_url": str(row.get("inbox_url") or ""),
+                    "mailbox_code_url": str(row.get("code_url") or ""),
+                    "mailbox_mail_url": str(row.get("mail_url") or ""),
                     "mailbox_domain": str(row.get("domain") or ""),
                     "mailbox_imap_user": str(row.get("imap_user") or ""),
                     "mailbox_imap_pass": str(row.get("imap_pass") or ""),
