@@ -14,8 +14,9 @@ type EmailResourceProvider = 'icloud_api' | 'outlook_token' | 'icloud_privacy' |
 const resumeSample = JSON.stringify(
   {
     email: 'user@example.com',
-    password: 'ChatGPTPassword',
     browser_storage_state_path: 'data/registered_accounts/storage_xxx.json',
+    browser_storage_state_source: 'chatgpt_session_token',
+    password: 'optional-only-if-login-page-appears',
     account_id: 'optional-account-id',
     plan_type: 'free',
   },
@@ -224,7 +225,7 @@ export function OAuthResume() {
         <div className="border-b border-gray-100 bg-gray-950 px-5 py-4 text-white">
           <h2 className="text-base font-semibold">OAuth 绑定 / resume 续跑</h2>
           <p className="mt-1 max-w-3xl text-sm text-gray-300">
-            使用注册阶段保存的 browser storage state 恢复会话，执行 OAuth 授权，成功后保存 access_token、refresh_token、id_token 到账号库 session_json。
+            开始前会先校验账号 AT 是否有效，通过后使用账号库保存的 browser storage state 恢复会话，执行 OAuth 授权，成功后保存 access_token、refresh_token、id_token 到账号库 session_json。导入 ChatGPT Session JSON 时如果包含 sessionToken，系统会自动生成 storage state。
           </p>
         </div>
         <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_420px]">
@@ -233,7 +234,7 @@ export function OAuthResume() {
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h3 className="text-sm font-semibold text-gray-900">账号库续跑</h3>
-                  <p className="mt-1 text-xs text-gray-500">填写账号库 ID，系统会读取该账号保存的 session_json 和 storage_state。</p>
+                  <p className="mt-1 text-xs text-gray-500">填写账号库 ID，系统会读取该账号保存的 session_json 和 storage_state；密码可选，只在进入密码页时使用。</p>
                 </div>
                 <button
                   type="button"
@@ -597,7 +598,7 @@ export function OAuthResume() {
                   <input
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
-                    placeholder="留空使用账号库或 resume JSON 中的密码"
+                    placeholder="可选；只有续跑跳到密码页时才需要"
                     disabled={running}
                     className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500 disabled:bg-gray-100"
                   />

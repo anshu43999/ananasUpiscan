@@ -113,7 +113,7 @@ const pageGuides: Record<AppTab, {
       { title: '回写结果', detail: '成功后 access_token、refresh_token 和 id_token 会更新到账号库。' },
     ],
     tips: [
-      '只有需要继续 OAuth 或补绑定时才用这个模块。',
+      'session_json 需要包含 browser_storage_state_path；密码不是必填，只在续跑跳到密码页时才需要。',
       '如果流程触发 add_phone，请确认绑定手机号池有可用资源。',
     ],
   },

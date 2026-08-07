@@ -13,8 +13,12 @@ from pathlib import Path
 from typing import Any
 
 from . import account_library, resource_pool
+from .account_check import _extract_access_token
 from .email_registration import LinkApiMailbox
 from .extractor.proxy import normalize_proxy_url, proxy_label
+
+
+VALID_ACCOUNT_HEALTH_STATUSES = {"active", "active_free", "active_plus"}
 
 
 def utc_now() -> str:
@@ -137,19 +141,72 @@ class OAuthResumeManager:
         legacy_id = int(payload.get("account_id") or 0)
         if legacy_id > 0 and legacy_id not in account_ids:
             account_ids.append(legacy_id)
+        normalized_account_ids: list[int] = []
+        for item in account_ids:
+            try:
+                item_id = int(item or 0)
+            except (TypeError, ValueError):
+                continue
+            if item_id > 0 and item_id not in normalized_account_ids:
+                normalized_account_ids.append(item_id)
+        account_ids = normalized_account_ids
+
+        health_by_id: dict[int, dict[str, Any]] = {}
+        if account_ids:
+            self._log(job_id, f"开始账号有效性校验：{len(account_ids)} 个账号")
+            health_payload = account_library.check_health(account_ids, concurrency=min(8, max(1, len(account_ids))))
+            for item in health_payload.get("items") or []:
+                if not isinstance(item, dict):
+                    continue
+                item_id = int(item.get("id") or 0)
+                health = item.get("health_result") if isinstance(item.get("health_result"), dict) else item.get("health")
+                if item_id > 0 and isinstance(health, dict):
+                    health_by_id[item_id] = health
+            self._log(job_id, f"账号有效性校验完成：有效 {sum(1 for result in health_by_id.values() if self._health_is_valid(result))}，无效 {sum(1 for result in health_by_id.values() if not self._health_is_valid(result))}")
 
         for account_id in account_ids:
             detail = account_library.get_account(int(account_id))
             if not detail:
                 self._log(job_id, f"账号库 ID {account_id} 不存在，已跳过", "warn")
                 continue
+            health = health_by_id.get(int(account_id))
+            if not self._health_is_valid(health):
+                status = str((health or {}).get("health_status") or detail.get("health_status") or "unknown")
+                message = str((health or {}).get("message") or detail.get("health_error") or "账号健康校验未通过")
+                self._log(job_id, f"账号库 ID {account_id} 有效性校验失败，已跳过：{status}，{message}", "warn")
+                continue
             contract = self._contract_from_account(detail, payload)
             tasks.append({"source": "account", "account": detail, "contract": contract})
 
         for index, record in enumerate(self._parse_resume_json(payload.get("resume_json")), start=1):
+            token = _extract_access_token(json.dumps(record, ensure_ascii=False))
+            if token:
+                health = account_library.check_token_health(
+                    token,
+                    {
+                        "id": f"resume_json_{index}",
+                        "email": record.get("email") or "",
+                        "account_id": record.get("account_id") or record.get("accountId") or "",
+                        "plan_type": record.get("plan_type") or record.get("planType") or "",
+                    },
+                )
+                if not self._health_is_valid(health):
+                    status = str(health.get("health_status") or "unknown")
+                    message = str(health.get("message") or "账号健康校验未通过")
+                    self._log(job_id, f"resume JSON #{index} 有效性校验失败，已跳过：{status}，{message}", "warn")
+                    continue
+            else:
+                self._log(job_id, f"resume JSON #{index} 未包含 access_token，跳过 AT 有效性校验", "warn")
             tasks.append({"source": "resume_json", "account": None, "contract": self._normalize_resume_record(record, payload), "resume_index": index})
 
         return tasks
+
+    @staticmethod
+    def _health_is_valid(health: dict[str, Any] | None) -> bool:
+        if not isinstance(health, dict):
+            return False
+        status = str(health.get("health_status") or "").strip().lower()
+        return bool(health.get("ok")) and (not status or status in VALID_ACCOUNT_HEALTH_STATUSES)
 
     @staticmethod
     def _parse_resume_json(value: Any) -> list[dict[str, Any]]:
@@ -219,8 +276,6 @@ class OAuthResumeManager:
                 merged["browser_storage_state_path"] = oauth_state
         if not str(merged.get("browser_storage_state_path") or "").strip():
             raise RuntimeError("resume JSON 缺少 browser_storage_state_path")
-        if not password:
-            raise RuntimeError("resume JSON 缺少 password/generated_chatgpt_password")
         return merged
 
     @staticmethod

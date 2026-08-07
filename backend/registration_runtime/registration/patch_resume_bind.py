@@ -106,8 +106,6 @@ class PatchResumeBindEngine:
 
         if not identity:
             raise RuntimeError("resume-bind 缺少登录身份（email 或 phone_number）")
-        if not secret:
-            raise RuntimeError("resume-bind 缺少账号密码")
 
         oauth_start = self._build_oauth_start(
             authorize_url=authorize_url,
@@ -183,6 +181,8 @@ class PatchResumeBindEngine:
                 continue
 
             if page_type in {"login_password", "create_account_password"}:
+                if not secret:
+                    raise RuntimeError("OAuth 续跑进入密码页，但账号库/resume JSON 未提供密码")
                 response = self._submit_password(secret)
                 self._raise_if_bad_response("密码提交失败", response)
                 self._sync_page_to_state(self._derive_state(str(response.get("url") or self.page.url or "")))

@@ -577,7 +577,7 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
               <div>
                 <h3 className="text-base font-semibold text-gray-900">导入账号</h3>
                 <p className="mt-1 text-xs leading-5 text-gray-500">
-                  支持一行一个 AT、Session JSON、数组 JSON、邮箱四段格式。导入时会从 JWT 中解析邮箱、账号 ID 和套餐。
+                  支持一行一个 AT、ChatGPT /api/auth/session JSON、数组 JSON、邮箱四段格式。包含 sessionToken 的 Session JSON 会自动生成 OAuth 续跑可用的 storage state。
                 </p>
               </div>
               <button
@@ -594,7 +594,7 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
                 value={importText}
                 onChange={(event) => setImportText(event.target.value)}
                 rows={14}
-                placeholder="粘贴 AT / Session JSON / email----password----...----access_token"
+                placeholder={'粘贴 AT / ChatGPT Session JSON / email----password----...----access_token\n\nSession JSON 示例字段：{"user":{"email":"user@example.com"},"account":{"id":"...","planType":"free"},"accessToken":"...","sessionToken":"..."}'}
                 className="max-h-[56vh] w-full resize-y rounded-lg border border-gray-300 px-3 py-2 font-mono text-xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
               />
               <div className="flex flex-wrap items-center justify-end gap-2">

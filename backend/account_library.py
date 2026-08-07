@@ -168,6 +168,31 @@ def _session_json(raw: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _dict_value(data: dict[str, Any], key: str) -> dict[str, Any]:
+    value = data.get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def _str_value(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _session_json_record(value: dict[str, Any]) -> dict[str, Any]:
+    user = _dict_value(value, "user")
+    account = _dict_value(value, "account")
+    token = _extract_access_token(json.dumps(value, ensure_ascii=False))
+    record = {
+        "session_json": dumps(value),
+        "access_token": token,
+        "email": _str_value(value.get("email") or user.get("email")),
+        "account_id": _str_value(value.get("account_id") or value.get("accountId") or account.get("id")),
+        "plan_type": _str_value(value.get("plan_type") or value.get("planType") or account.get("plan_type") or account.get("planType")),
+        "password": _str_value(value.get("password") or value.get("generated_chatgpt_password")),
+        "source": "session_json_import",
+    }
+    return {key: val for key, val in record.items() if val}
+
+
 def _candidate_records_from_json(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, list):
         items: list[dict[str, Any]] = []
@@ -178,11 +203,65 @@ def _candidate_records_from_json(value: Any) -> list[dict[str, Any]]:
         return []
     token = _extract_access_token(json.dumps(value, ensure_ascii=False))
     if token:
-        return [{"session_json": dumps(value), "access_token": token}]
+        return [_session_json_record(value)]
     records = value.get("accounts") or value.get("items") or value.get("data")
     if isinstance(records, list):
         return _candidate_records_from_json(records)
     return []
+
+
+def _session_token_expires_at(session: dict[str, Any]) -> int:
+    raw = _str_value(session.get("expires") or session.get("session_expires_at") or session.get("sessionExpiresAt"))
+    if not raw:
+        return -1
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return int(parsed.timestamp())
+    except ValueError:
+        return -1
+
+
+def _build_chatgpt_storage_state(session: dict[str, Any]) -> dict[str, Any]:
+    session_token = _str_value(session.get("sessionToken") or session.get("session_token"))
+    if not session_token:
+        return {}
+    expires = _session_token_expires_at(session)
+    cookies = []
+    for domain in ("chatgpt.com", ".chatgpt.com"):
+        cookies.append(
+            {
+                "name": "__Secure-next-auth.session-token",
+                "value": session_token,
+                "domain": domain,
+                "path": "/",
+                "expires": expires,
+                "httpOnly": True,
+                "secure": True,
+                "sameSite": "Lax",
+            }
+        )
+    return {"cookies": cookies, "origins": []}
+
+
+def _ensure_session_storage_state(record: dict[str, Any]) -> dict[str, Any]:
+    session = _session_json(str(record.get("session_json") or ""))
+    if not session:
+        return record
+    if _str_value(session.get("browser_storage_state_path") or session.get("oauth_browser_storage_state_path")):
+        return record
+    storage_state = _build_chatgpt_storage_state(session)
+    if not storage_state:
+        return record
+
+    key_seed = _str_value(record.get("account_id") or record.get("email") or token_hash(str(record.get("access_token") or "")))
+    filename_seed = hashlib.sha256(key_seed.encode("utf-8")).hexdigest()[:20] if key_seed else hashlib.sha256(dumps(session).encode("utf-8")).hexdigest()[:20]
+    storage_path = Path.cwd() / "data" / "account_storage" / f"chatgpt_session_{filename_seed}.json"
+    storage_path.parent.mkdir(parents=True, exist_ok=True)
+    storage_path.write_text(dumps(storage_state), encoding="utf-8")
+    session["browser_storage_state_path"] = str(storage_path)
+    session["browser_storage_state_source"] = "chatgpt_session_token"
+    record["session_json"] = dumps(session)
+    return record
 
 
 def parse_account_import(text: str, default_channel: str = "") -> list[dict[str, Any]]:
@@ -229,25 +308,24 @@ def parse_account_import(text: str, default_channel: str = "") -> list[dict[str,
         account_id = str(record.get("account_id") or identity.account_id or "").strip()
         key_seed = account_id or email or token_hash(token)
         channels = [default_channel.strip().lower()] if default_channel.strip() else []
-        normalized.append(
-            {
-                "account_key": key_seed,
-                "account_id": account_id,
-                "email": email,
-                "password": str(record.get("password") or "").strip(),
-                "access_token": token,
-                "session_json": str(record.get("session_json") or "").strip(),
-                "plan_type": str(record.get("plan_type") or identity.plan_type or "").strip(),
-                "status": str(record.get("status") or "active").strip().lower(),
-                "source": str(record.get("source") or "manual_import").strip(),
-                "channels": channels,
-                "plus_status": str(
-                    record.get("plus_status")
-                    or ("verified_plus" if str(record.get("plan_type") or identity.plan_type or "").strip().lower().replace(" ", "") in PAID_PLANS else "unknown")
-                ).strip(),
-                "note": str(record.get("note") or "").strip(),
-            }
-        )
+        normalized_record = {
+            "account_key": key_seed,
+            "account_id": account_id,
+            "email": email,
+            "password": str(record.get("password") or "").strip(),
+            "access_token": token,
+            "session_json": str(record.get("session_json") or "").strip(),
+            "plan_type": str(record.get("plan_type") or identity.plan_type or "").strip(),
+            "status": str(record.get("status") or "active").strip().lower(),
+            "source": str(record.get("source") or "manual_import").strip(),
+            "channels": channels,
+            "plus_status": str(
+                record.get("plus_status")
+                or ("verified_plus" if str(record.get("plan_type") or identity.plan_type or "").strip().lower().replace(" ", "") in PAID_PLANS else "unknown")
+            ).strip(),
+            "note": str(record.get("note") or "").strip(),
+        }
+        normalized.append(_ensure_session_storage_state(normalized_record))
     return normalized
 
 
@@ -596,9 +674,10 @@ def check_accounts(ids: list[int], promo_id: str = "plus-1-month-free", concurre
 PAID_PLANS = {"plus", "pro", "premium", "paid", "team", "business", "enterprise", "chatgptplus", "chatgptpro", "chatgptteam"}
 
 
-def _token_health(row: sqlite3.Row) -> dict[str, Any]:
-    token = str(row["access_token"] or "").strip()
-    key = str(row["account_key"] or row["email"] or row["id"])
+def check_token_health(token: str, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
+    fallback = fallback or {}
+    token = str(token or "").strip()
+    key = str(fallback.get("account_key") or fallback.get("email") or fallback.get("id") or token_hash(token) or "unknown")
     if not token:
         return {
             "key": key,
@@ -629,10 +708,10 @@ def _token_health(row: sqlite3.Row) -> dict[str, Any]:
             "account_id": identity.account_id,
             "plan_type": identity.plan_type,
         }
-    if not identity.account_id and str(row["account_id"] or "").strip():
-        identity.account_id = str(row["account_id"] or "").strip()
-    if not identity.email and str(row["email"] or "").strip():
-        identity.email = str(row["email"] or "").strip()
+    if not identity.account_id and str(fallback.get("account_id") or "").strip():
+        identity.account_id = str(fallback.get("account_id") or "").strip()
+    if not identity.email and str(fallback.get("email") or "").strip():
+        identity.email = str(fallback.get("email") or "").strip()
     subscription = fetch_subscription_status_details(identity)
     if subscription.get("ok"):
         plan = str(subscription.get("plan_type") or subscription.get("status") or "free").strip().lower().replace(" ", "") or "free"
@@ -666,7 +745,7 @@ def _token_health(row: sqlite3.Row) -> dict[str, Any]:
             "plan_type": identity.plan_type,
         }
 
-    plan = str(identity.plan_type or row["plan_type"] or "free").strip().lower().replace(" ", "") or "free"
+    plan = str(identity.plan_type or fallback.get("plan_type") or "free").strip().lower().replace(" ", "") or "free"
     paid = plan in PAID_PLANS
     return {
         "key": key,
@@ -682,6 +761,19 @@ def _token_health(row: sqlite3.Row) -> dict[str, Any]:
         "subscription_check_error": str(subscription.get("error") or ""),
         "subscription_source": str(subscription.get("source") or "backend-api/wham/usage"),
     }
+
+
+def _token_health(row: sqlite3.Row) -> dict[str, Any]:
+    return check_token_health(
+        str(row["access_token"] or "").strip(),
+        {
+            "id": row["id"],
+            "account_key": row["account_key"],
+            "email": row["email"],
+            "account_id": row["account_id"],
+            "plan_type": row["plan_type"],
+        },
+    )
 
 
 def check_health(ids: list[int], concurrency: int = 8) -> dict[str, Any]:
