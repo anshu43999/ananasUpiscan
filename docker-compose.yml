@@ -3,13 +3,17 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
     image: upiscan:latest
     container_name: upiscan
     restart: unless-stopped
+    depends_on:
+      - go-email-worker
     ports:
       - "8000:8000"
     environment:
       UPISCAN_WORKERS: "2"
+      GO_EMAIL_PROTOCOL_URL: ${GO_EMAIL_PROTOCOL_URL:-http://go-email-worker:18765}
       UPI_PROXY_SEED_FILE: /app/data/proxy_seeds.txt
       UPI_PROXY_STATE_FILE: /app/data/proxy_state.json
       UPI_LOG_DIR: /app/logs
@@ -33,12 +37,44 @@ services:
       READY_PLUS_API_KEY: ${READY_PLUS_API_KEY:-}
       READY_PLUS_TIMEOUT: ${READY_PLUS_TIMEOUT:-30}
       READY_PLUS_DOWNLOAD_TIMEOUT: ${READY_PLUS_DOWNLOAD_TIMEOUT:-120}
+      UPISCAN_EMAIL_REGISTER_REFERENCE_ROOT: ${UPISCAN_EMAIL_REGISTER_REFERENCE_ROOT:-}
+      UPISCAN_EMAIL_REGISTER_WORKERS: ${UPISCAN_EMAIL_REGISTER_WORKERS:-2}
+      UPISCAN_PHONE_REGISTER_WORKERS: ${UPISCAN_PHONE_REGISTER_WORKERS:-2}
+      UPISCAN_OAUTH_RESUME_WORKERS: ${UPISCAN_OAUTH_RESUME_WORKERS:-2}
+      UPISCAN_ACCOUNT_DB: ${UPISCAN_ACCOUNT_DB:-/app/data/upiscan.sqlite3}
+      UPISCAN_RESOURCE_DB: ${UPISCAN_RESOURCE_DB:-/app/data/upiscan.sqlite3}
+      BIND_SMS_PROVIDER: ${BIND_SMS_PROVIDER:-}
+      BIND_SMS_API_KEY: ${BIND_SMS_API_KEY:-}
+      BIND_SMS_SERVICE: ${BIND_SMS_SERVICE:-dr}
+      BIND_SMS_COUNTRY: ${BIND_SMS_COUNTRY:-}
+      BIND_SMS_PROXY: ${BIND_SMS_PROXY:-}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./dumps:/app/dumps
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+  go-email-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: go-email-worker
+    image: upiscan-go-email-worker:latest
+    container_name: upiscan-go-email-worker
+    restart: unless-stopped
+    expose:
+      - "18765"
+    environment:
+      GPT_REGISTER_DB_BACKEND: sqlite
+      GPT_REGISTER_SKIP_ENV_DB: "1"
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:18765/health"]
       interval: 30s
       timeout: 5s
       retries: 3

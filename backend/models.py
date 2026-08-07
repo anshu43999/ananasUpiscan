@@ -176,6 +176,11 @@ class AccountLibraryItem(BaseModel):
     health_source: str | None = None
     health_error: str | None = None
     health: dict[str, Any] = Field(default_factory=dict)
+    plus_status: str = "unknown"
+    plus_verified_at: str | None = None
+    plus_check_source: str | None = None
+    plus_check_error: str | None = None
+    plus: dict[str, Any] = Field(default_factory=dict)
     note: str | None = None
     has_access_token: bool = False
     access_token_preview: str | None = None
@@ -260,6 +265,23 @@ class AccountLibraryHealthResponse(BaseModel):
     items: list[AccountLibraryDetail] = Field(default_factory=list)
 
 
+class AccountLibraryPlusVerifyRequest(AccountLibraryIdsRequest):
+    concurrency: int = Field(default=8, ge=1, le=32)
+    proxy_region: str = "JP"
+    use_proxy_pool: bool = True
+    go_email_protocol_url: str = ""
+
+
+class AccountLibraryPlusVerifyResponse(BaseModel):
+    ok: bool = True
+    checked: int = 0
+    paid: int = 0
+    counts: dict[str, int] = Field(default_factory=dict)
+    items: list[AccountLibraryDetail] = Field(default_factory=list)
+    proxy_pool_used: bool = False
+    proxy_region: str = "JP"
+
+
 class AccountLibraryExportJsonRequest(AccountLibraryIdsRequest):
     include_secrets: bool = False
 
@@ -284,6 +306,313 @@ class AccountLibraryStatsResponse(BaseModel):
     eligible: int = 0
     with_access_token: int = 0
     healthy: int = 0
+    plus: int = 0
+
+
+class ResourcePoolItem(BaseModel):
+    id: int
+    resource_type: str
+    provider: str
+    resource_key: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    status: str
+    lease_id: str | None = None
+    success_count: int = 0
+    fail_count: int = 0
+    cooldown_until: str | None = None
+    last_error: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class ResourcePoolListResponse(BaseModel):
+    ok: bool = True
+    items: list[ResourcePoolItem] = Field(default_factory=list)
+    counts: dict[str, int] = Field(default_factory=dict)
+
+
+class ResourcePoolImportPhoneRequest(BaseModel):
+    text: str = Field(min_length=1)
+    provider: Literal["user_phone_url", "bind_user_phone_url"] = "user_phone_url"
+
+
+class ResourcePoolImportProxyRequest(BaseModel):
+    text: str = Field(min_length=1)
+    provider: Literal["proxy_seed"] = "proxy_seed"
+    protocol: Literal["socks5", "http", "https"] = "socks5"
+    style: Literal["", "kookeey", "lajiao", "bestgo", "plain"] = ""
+
+
+EmailProvider = Literal["icloud_api", "outlook_token", "icloud_privacy", "forwarded_domain", "cfworker_admin_api"]
+
+
+class ResourcePoolImportEmailRequest(BaseModel):
+    text: str = Field(min_length=1)
+    provider: EmailProvider = "icloud_api"
+
+
+class ResourcePoolImportResponse(BaseModel):
+    ok: bool = True
+    imported: int = 0
+    total_rows: int = 0
+
+
+class ResourcePoolStatusRequest(BaseModel):
+    ids: list[int] = Field(default_factory=list)
+    status: Literal["available", "leased", "used", "cooldown", "disabled"] = "available"
+    error: str = ""
+
+
+class ResourcePoolMutateResponse(BaseModel):
+    ok: bool = True
+    updated: int = 0
+    deleted: int = 0
+
+
+class EmailRegistrationCreate(BaseModel):
+    mailbox_text: str = ""
+    mailbox_proxy: str = ""
+    use_email_resource_pool: bool = False
+    email_resource_provider: EmailProvider = "icloud_api"
+    email_resource_count: int = Field(default=1, ge=1, le=500)
+    registration_proxy: str = ""
+    registration_proxies: str | list[str] = ""
+    use_proxy_resource_pool: bool = False
+    proxy_resource_provider: str = "proxy_seed"
+    proxy_resource_count: int = Field(default=0, ge=0, le=500)
+    proxy_seed_region: str = "JP"
+    proxy_seed_ttl: int = Field(default=10, ge=1, le=1440)
+    proxy_seed_protocol: Literal["socks5", "http", "https"] = "socks5"
+    registration_retry_attempts: int = Field(default=2, ge=1, le=5)
+    concurrency: int = Field(default=1, ge=1, le=8)
+    headed: bool = False
+    chatgpt_password: str = ""
+    email_register_flow: str = "fast"
+    email_protocol_backend: Literal["python", "go"] = "python"
+    go_email_protocol_url: str = ""
+    go_email_protocol_timeout_seconds: int = Field(default=900, ge=120, le=3600)
+    go_email_protocol_poll_interval_ms: int = Field(default=1000, ge=500, le=10000)
+    browser_engine: str = "playwright"
+    email_otp_timeout: int = Field(default=200, ge=30, le=1200)
+    email_otp_poll_interval: int = Field(default=3, ge=1, le=30)
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class EmailRegistrationJobCreated(BaseModel):
+    job_id: str
+
+
+class EmailRegistrationLog(BaseModel):
+    timestamp: str
+    message: str
+    level: LogLevel = "info"
+
+
+class EmailRegistrationItem(BaseModel):
+    ok: bool
+    email: str
+    account_id: str | None = None
+    account: AccountLibraryItem | None = None
+    proxy_label: str | None = None
+    attempts: int | None = None
+    tried_proxy_labels: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class EmailRegistrationSnapshot(BaseModel):
+    job_id: str
+    status: JobStatus
+    total: int = 0
+    completed: int = 0
+    success: int = 0
+    failed: int = 0
+    logs: list[EmailRegistrationLog] = Field(default_factory=list)
+    items: list[EmailRegistrationItem] = Field(default_factory=list)
+    error: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class GoEmailBatchCreate(BaseModel):
+    count: int = Field(default=1, ge=1, le=5000)
+    max_concurrent: int = Field(default=0, ge=0, le=5000)
+    batch_id: str = ""
+    go_email_protocol_url: str = ""
+    mailbox_provider: EmailProvider = "outlook_token"
+    proxy_seed_region: str = "JP,US,DE,GB,BR"
+    proxy_seed_styles: str = "bestgo,1024"
+    proxy_seed_ttl: int = Field(default=15, ge=1, le=1440)
+    email_otp_timeout: int = Field(default=120, ge=60, le=240)
+    go_batch_timeout_seconds: int = Field(default=210, ge=120, le=1800)
+    email_tries: int = Field(default=5, ge=1, le=20)
+    skip_phone: bool = True
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class GoEmailBatchResponse(BaseModel):
+    ok: bool = True
+    batch_id: str = ""
+    snapshot: dict[str, Any] = Field(default_factory=dict)
+
+
+class PhoneRegistrationCreate(BaseModel):
+    phone_text: str = ""
+    sms_provider: str = "user_phone_url"
+    use_resource_pool: bool = False
+    resource_provider: str = "user_phone_url"
+    provider_count: int = Field(default=1, ge=1, le=100)
+    sms_proxy: str = ""
+    sms_api_key: str = ""
+    sms_service: str = "dr"
+    sms_country: str = ""
+    sms_activate_api_key: str = ""
+    sms_activate_country: str = ""
+    herosms_api_key: str = ""
+    herosms_service: str = ""
+    herosms_country: str = ""
+    herosms_max_price: float | None = None
+    register_reuse_phone_to_max: bool = True
+    register_phone_success_max: int = Field(default=3, ge=0, le=20)
+    smsbower_api_key: str = ""
+    smsbower_service: str = ""
+    smsbower_country: str = ""
+    smsbower_max_price: float | None = None
+    smsbower_min_price: float | None = None
+    smsbower_provider_ids: str = ""
+    registration_proxy: str = ""
+    registration_proxies: str | list[str] = ""
+    use_proxy_resource_pool: bool = False
+    proxy_resource_provider: str = "proxy_seed"
+    proxy_resource_count: int = Field(default=0, ge=0, le=500)
+    proxy_seed_region: str = "JP"
+    proxy_seed_ttl: int = Field(default=10, ge=1, le=1440)
+    proxy_seed_protocol: Literal["socks5", "http", "https"] = "socks5"
+    registration_retry_attempts: int = Field(default=2, ge=1, le=5)
+    concurrency: int = Field(default=1, ge=1, le=8)
+    headed: bool = False
+    chatgpt_password: str = ""
+    browser_engine: str = "playwright"
+    country_code: str = "1"
+    country_name: str = "United States"
+    sms_timeout: int = Field(default=180, ge=30, le=1200)
+    sms_poll_interval: int = Field(default=3, ge=1, le=30)
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class PhoneRegistrationJobCreated(BaseModel):
+    job_id: str
+
+
+class PhoneRegistrationItem(BaseModel):
+    ok: bool
+    phone: str
+    email: str | None = None
+    account_id: str | None = None
+    account: AccountLibraryItem | None = None
+    proxy_label: str | None = None
+    attempts: int | None = None
+    tried_proxy_labels: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class PhoneRegistrationSnapshot(BaseModel):
+    job_id: str
+    status: JobStatus
+    total: int = 0
+    completed: int = 0
+    success: int = 0
+    failed: int = 0
+    logs: list[EmailRegistrationLog] = Field(default_factory=list)
+    items: list[PhoneRegistrationItem] = Field(default_factory=list)
+    error: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class OAuthResumeCreate(BaseModel):
+    account_id: int | None = None
+    account_ids: list[int] = Field(default_factory=list)
+    resume_json: str = ""
+    bind_email: str = ""
+    bind_email_text: str = ""
+    mailbox_proxy: str = ""
+    bind_email_use_resource_pool: bool = False
+    bind_email_resource_provider: EmailProvider = "icloud_api"
+    bind_sms_provider: str = ""
+    bind_use_resource_pool: bool = False
+    bind_resource_provider: str = "bind_user_phone_url"
+    bind_sms_phone_url: str = ""
+    bind_sms_phone_urls: str = ""
+    bind_sms_phone_url_file: str = ""
+    bind_sms_proxy: str = ""
+    bind_sms_api_key: str = ""
+    bind_sms_service: str = "dr"
+    bind_sms_country: str = ""
+    bind_country_code: str = ""
+    bind_country_name: str = ""
+    bind_herosms_api_key: str = ""
+    bind_herosms_service: str = ""
+    bind_herosms_country: str = ""
+    bind_herosms_max_price: float | None = None
+    bind_smsbower_api_key: str = ""
+    bind_smsbower_service: str = ""
+    bind_smsbower_country: str = ""
+    bind_smsbower_max_price: float | None = None
+    bind_smsbower_min_price: float | None = None
+    bind_smsbower_provider_ids: str = ""
+    bind_sms_activate_api_key: str = ""
+    bind_sms_activate_country: str = ""
+    registration_proxy: str = ""
+    registration_proxies: str | list[str] = ""
+    use_proxy_resource_pool: bool = False
+    proxy_resource_provider: str = "proxy_seed"
+    proxy_resource_count: int = Field(default=0, ge=0, le=500)
+    proxy_seed_region: str = "JP"
+    proxy_seed_ttl: int = Field(default=10, ge=1, le=1440)
+    proxy_seed_protocol: Literal["socks5", "http", "https"] = "socks5"
+    registration_retry_attempts: int = Field(default=2, ge=1, le=5)
+    concurrency: int = Field(default=1, ge=1, le=6)
+    headed: bool = False
+    chatgpt_password: str = ""
+    browser_engine: str = "playwright"
+    email_otp_timeout: int = Field(default=200, ge=30, le=1200)
+    email_otp_poll_interval: int = Field(default=3, ge=1, le=30)
+    allow_page_fallback: bool = True
+    login_identity: str = ""
+    redirect_uri: str = ""
+    client_id: str = ""
+    authorize_url: str = ""
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class OAuthResumeJobCreated(BaseModel):
+    job_id: str
+
+
+class OAuthResumeItem(BaseModel):
+    ok: bool
+    email: str | None = None
+    account_id: str | None = None
+    account: AccountLibraryItem | None = None
+    proxy_label: str | None = None
+    attempts: int | None = None
+    tried_proxy_labels: list[str] = Field(default_factory=list)
+    result: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+
+
+class OAuthResumeSnapshot(BaseModel):
+    job_id: str
+    status: JobStatus
+    total: int = 0
+    completed: int = 0
+    success: int = 0
+    failed: int = 0
+    logs: list[EmailRegistrationLog] = Field(default_factory=list)
+    items: list[OAuthResumeItem] = Field(default_factory=list)
+    error: str | None = None
+    created_at: str
+    updated_at: str
 
 
 class ProxyCheckRequest(BaseModel):

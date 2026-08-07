@@ -203,6 +203,11 @@ export interface AccountLibraryItem {
   health_source?: string | null;
   health_error?: string | null;
   health?: Record<string, unknown>;
+  plus_status: string;
+  plus_verified_at?: string | null;
+  plus_check_source?: string | null;
+  plus_check_error?: string | null;
+  plus?: Record<string, unknown>;
   note?: string | null;
   has_access_token: boolean;
   access_token_preview?: string | null;
@@ -237,9 +242,268 @@ export interface AccountLibraryStatsResponse {
   eligible: number;
   with_access_token: number;
   healthy: number;
+  plus: number;
+}
+
+export type EmailResourceProvider = 'icloud_api' | 'outlook_token' | 'icloud_privacy' | 'forwarded_domain' | 'cfworker_admin_api';
+
+export interface EmailRegistrationCreateOptions {
+  mailbox_text?: string;
+  mailbox_proxy?: string;
+  use_email_resource_pool?: boolean;
+  email_resource_provider?: EmailResourceProvider;
+  email_resource_count?: number;
+  registration_proxy?: string;
+  registration_proxies?: string | string[];
+  use_proxy_resource_pool?: boolean;
+  proxy_resource_provider?: string;
+  proxy_resource_count?: number;
+  proxy_seed_region?: string;
+  proxy_seed_ttl?: number;
+  proxy_seed_protocol?: 'socks5' | 'http' | 'https';
+  registration_retry_attempts?: number;
+  concurrency?: number;
+  headed?: boolean;
+  chatgpt_password?: string;
+  email_register_flow?: string;
+  email_protocol_backend?: 'python' | 'go';
+  go_email_protocol_url?: string;
+  go_email_protocol_timeout_seconds?: number;
+  go_email_protocol_poll_interval_ms?: number;
+  browser_engine?: string;
+  email_otp_timeout?: number;
+  email_otp_poll_interval?: number;
+  config?: Record<string, unknown>;
+}
+
+export interface EmailRegistrationSnapshot {
+  job_id: string;
+  status: ExtractJobStatus;
+  total: number;
+  completed: number;
+  success: number;
+  failed: number;
+  logs: ExtractJobLog[];
+  items: Array<{
+    ok: boolean;
+    email: string;
+    account_id?: string | null;
+    account?: AccountLibraryItem | null;
+    proxy_label?: string | null;
+    attempts?: number | null;
+    tried_proxy_labels?: string[];
+    error?: string | null;
+  }>;
+  error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GoEmailBatchCreateOptions {
+  count: number;
+  max_concurrent?: number;
+  batch_id?: string;
+  go_email_protocol_url?: string;
+  mailbox_provider?: EmailResourceProvider;
+  proxy_seed_region?: string;
+  proxy_seed_styles?: string;
+  proxy_seed_ttl?: number;
+  email_otp_timeout?: number;
+  go_batch_timeout_seconds?: number;
+  email_tries?: number;
+  skip_phone?: boolean;
+  config?: Record<string, unknown>;
+}
+
+export interface GoEmailBatchResponse {
+  ok: boolean;
+  batch_id: string;
+  snapshot: Record<string, unknown>;
+}
+
+export interface PhoneRegistrationCreateOptions {
+  phone_text?: string;
+  sms_provider?: string;
+  use_resource_pool?: boolean;
+  resource_provider?: string;
+  provider_count?: number;
+  sms_proxy?: string;
+  sms_api_key?: string;
+  sms_service?: string;
+  sms_country?: string;
+  sms_activate_api_key?: string;
+  sms_activate_country?: string;
+  herosms_api_key?: string;
+  herosms_service?: string;
+  herosms_country?: string;
+  herosms_max_price?: number | null;
+  register_reuse_phone_to_max?: boolean;
+  register_phone_success_max?: number;
+  smsbower_api_key?: string;
+  smsbower_service?: string;
+  smsbower_country?: string;
+  smsbower_max_price?: number | null;
+  smsbower_min_price?: number | null;
+  smsbower_provider_ids?: string;
+  registration_proxy?: string;
+  registration_proxies?: string | string[];
+  use_proxy_resource_pool?: boolean;
+  proxy_resource_provider?: string;
+  proxy_resource_count?: number;
+  proxy_seed_region?: string;
+  proxy_seed_ttl?: number;
+  proxy_seed_protocol?: 'socks5' | 'http' | 'https';
+  registration_retry_attempts?: number;
+  concurrency?: number;
+  headed?: boolean;
+  chatgpt_password?: string;
+  browser_engine?: string;
+  country_code?: string;
+  country_name?: string;
+  sms_timeout?: number;
+  sms_poll_interval?: number;
+  config?: Record<string, unknown>;
+}
+
+export interface PhoneRegistrationSnapshot {
+  job_id: string;
+  status: ExtractJobStatus;
+  total: number;
+  completed: number;
+  success: number;
+  failed: number;
+  logs: ExtractJobLog[];
+  items: Array<{
+    ok: boolean;
+    phone: string;
+    email?: string | null;
+    account_id?: string | null;
+    account?: AccountLibraryItem | null;
+    proxy_label?: string | null;
+    attempts?: number | null;
+    tried_proxy_labels?: string[];
+    error?: string | null;
+  }>;
+  error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OAuthResumeCreateOptions {
+  account_id?: number | null;
+  account_ids?: number[];
+  resume_json?: string;
+  bind_email?: string;
+  bind_email_text?: string;
+  mailbox_proxy?: string;
+  bind_email_use_resource_pool?: boolean;
+  bind_email_resource_provider?: EmailResourceProvider;
+  bind_sms_provider?: string;
+  bind_use_resource_pool?: boolean;
+  bind_resource_provider?: string;
+  bind_sms_phone_url?: string;
+  bind_sms_phone_urls?: string;
+  bind_sms_phone_url_file?: string;
+  bind_sms_proxy?: string;
+  bind_sms_api_key?: string;
+  bind_sms_service?: string;
+  bind_sms_country?: string;
+  bind_country_code?: string;
+  bind_country_name?: string;
+  bind_herosms_api_key?: string;
+  bind_herosms_service?: string;
+  bind_herosms_country?: string;
+  bind_herosms_max_price?: number | null;
+  bind_smsbower_api_key?: string;
+  bind_smsbower_service?: string;
+  bind_smsbower_country?: string;
+  bind_smsbower_max_price?: number | null;
+  bind_smsbower_min_price?: number | null;
+  bind_smsbower_provider_ids?: string;
+  bind_sms_activate_api_key?: string;
+  bind_sms_activate_country?: string;
+  registration_proxy?: string;
+  registration_proxies?: string | string[];
+  use_proxy_resource_pool?: boolean;
+  proxy_resource_provider?: string;
+  proxy_resource_count?: number;
+  proxy_seed_region?: string;
+  proxy_seed_ttl?: number;
+  proxy_seed_protocol?: 'socks5' | 'http' | 'https';
+  registration_retry_attempts?: number;
+  concurrency?: number;
+  headed?: boolean;
+  chatgpt_password?: string;
+  browser_engine?: string;
+  email_otp_timeout?: number;
+  email_otp_poll_interval?: number;
+  allow_page_fallback?: boolean;
+  login_identity?: string;
+  redirect_uri?: string;
+  client_id?: string;
+  authorize_url?: string;
+  config?: Record<string, unknown>;
+}
+
+export interface OAuthResumeSnapshot {
+  job_id: string;
+  status: ExtractJobStatus;
+  total: number;
+  completed: number;
+  success: number;
+  failed: number;
+  logs: ExtractJobLog[];
+  items: Array<{
+    ok: boolean;
+    email?: string | null;
+    account_id?: string | null;
+    account?: AccountLibraryItem | null;
+    proxy_label?: string | null;
+    attempts?: number | null;
+    tried_proxy_labels?: string[];
+    result?: Record<string, unknown>;
+    error?: string | null;
+  }>;
+  error?: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface AccountLibraryMutateResponse {
+  ok: boolean;
+  updated: number;
+  deleted: number;
+}
+
+export interface ResourcePoolItem {
+  id: number;
+  resource_type: string;
+  provider: string;
+  resource_key: string;
+  payload: Record<string, unknown>;
+  status: string;
+  lease_id?: string | null;
+  success_count: number;
+  fail_count: number;
+  cooldown_until?: string | null;
+  last_error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ResourcePoolListResponse {
+  ok: boolean;
+  items: ResourcePoolItem[];
+  counts: Record<string, number>;
+}
+
+export interface ResourcePoolImportResponse {
+  ok: boolean;
+  imported: number;
+  total_rows: number;
+}
+
+export interface ResourcePoolMutateResponse {
   ok: boolean;
   updated: number;
   deleted: number;
@@ -263,6 +527,16 @@ export interface AccountLibraryHealthResponse {
   checked: number;
   counts: Record<string, number>;
   items: AccountLibraryDetail[];
+}
+
+export interface AccountLibraryPlusVerifyResponse {
+  ok: boolean;
+  checked: number;
+  paid: number;
+  counts: Record<string, number>;
+  items: AccountLibraryDetail[];
+  proxy_pool_used: boolean;
+  proxy_region: string;
 }
 
 export interface AccountLibraryExportJsonResponse {
@@ -297,6 +571,62 @@ export function getAccountStats(): Promise<AccountLibraryStatsResponse> {
   return extractFetch('/api/accounts/stats');
 }
 
+export function startEmailRegistrationJob(options: EmailRegistrationCreateOptions): Promise<{ job_id: string }> {
+  return extractFetch('/api/email-registration/jobs', {
+    method: 'POST',
+    body: JSON.stringify(options),
+  });
+}
+
+export function getEmailRegistrationJob(jobId: string): Promise<EmailRegistrationSnapshot> {
+  return extractFetch(`/api/email-registration/jobs/${jobId}`);
+}
+
+export function startGoEmailBatch(options: GoEmailBatchCreateOptions): Promise<GoEmailBatchResponse> {
+  return extractFetch('/api/go-email-batches', {
+    method: 'POST',
+    body: JSON.stringify(options),
+  });
+}
+
+export function getGoEmailBatch(batchId: string, goEmailProtocolUrl = ''): Promise<GoEmailBatchResponse> {
+  const params = new URLSearchParams();
+  if (goEmailProtocolUrl) params.set('go_email_protocol_url', goEmailProtocolUrl);
+  const query = params.toString();
+  return extractFetch(`/api/go-email-batches/${encodeURIComponent(batchId)}${query ? `?${query}` : ''}`);
+}
+
+export function cancelGoEmailBatch(batchId: string, goEmailProtocolUrl = ''): Promise<GoEmailBatchResponse> {
+  const params = new URLSearchParams();
+  if (goEmailProtocolUrl) params.set('go_email_protocol_url', goEmailProtocolUrl);
+  const query = params.toString();
+  return extractFetch(`/api/go-email-batches/${encodeURIComponent(batchId)}${query ? `?${query}` : ''}`, {
+    method: 'DELETE',
+  });
+}
+
+export function startPhoneRegistrationJob(options: PhoneRegistrationCreateOptions): Promise<{ job_id: string }> {
+  return extractFetch('/api/phone-registration/jobs', {
+    method: 'POST',
+    body: JSON.stringify(options),
+  });
+}
+
+export function getPhoneRegistrationJob(jobId: string): Promise<PhoneRegistrationSnapshot> {
+  return extractFetch(`/api/phone-registration/jobs/${jobId}`);
+}
+
+export function startOAuthResumeJob(options: OAuthResumeCreateOptions): Promise<{ job_id: string }> {
+  return extractFetch('/api/oauth-resume/jobs', {
+    method: 'POST',
+    body: JSON.stringify(options),
+  });
+}
+
+export function getOAuthResumeJob(jobId: string): Promise<OAuthResumeSnapshot> {
+  return extractFetch(`/api/oauth-resume/jobs/${jobId}`);
+}
+
 export function importAccounts(text: string, defaultChannel = ''): Promise<AccountLibraryImportResponse> {
   return extractFetch('/api/accounts/import', {
     method: 'POST',
@@ -312,6 +642,64 @@ export function updateAccount(accountId: number, options: AccountLibraryUpdateOp
   return extractFetch(`/api/accounts/${accountId}`, {
     method: 'PUT',
     body: JSON.stringify(options),
+  });
+}
+
+export function listResources(
+  options: { resource_type?: string; provider?: string; status?: string; limit?: number } = {},
+): Promise<ResourcePoolListResponse> {
+  const params = new URLSearchParams();
+  params.set('resource_type', options.resource_type || 'phone');
+  if (options.provider) params.set('provider', options.provider);
+  if (options.status) params.set('status', options.status);
+  if (options.limit) params.set('limit', String(options.limit));
+  const query = params.toString();
+  return extractFetch(`/api/resources${query ? `?${query}` : ''}`);
+}
+
+export function importPhoneResources(text: string, provider: 'user_phone_url' | 'bind_user_phone_url'): Promise<ResourcePoolImportResponse> {
+  return extractFetch('/api/resources/import-phone', {
+    method: 'POST',
+    body: JSON.stringify({ text, provider }),
+  });
+}
+
+export function importProxySeedResources(
+  text: string,
+  options: { provider?: 'proxy_seed'; protocol?: 'socks5' | 'http' | 'https'; style?: '' | 'kookeey' | 'lajiao' | 'bestgo' | 'plain' } = {},
+): Promise<ResourcePoolImportResponse> {
+  return extractFetch('/api/resources/import-proxy-seeds', {
+    method: 'POST',
+    body: JSON.stringify({
+      text,
+      provider: options.provider || 'proxy_seed',
+      protocol: options.protocol || 'socks5',
+      style: options.style || '',
+    }),
+  });
+}
+
+export function importEmailResources(
+  text: string,
+  provider: EmailResourceProvider = 'icloud_api',
+): Promise<ResourcePoolImportResponse> {
+  return extractFetch('/api/resources/import-email', {
+    method: 'POST',
+    body: JSON.stringify({ text, provider }),
+  });
+}
+
+export function updateResourceStatus(ids: number[], status: string, error = ''): Promise<ResourcePoolMutateResponse> {
+  return extractFetch('/api/resources/status', {
+    method: 'POST',
+    body: JSON.stringify({ ids, status, error }),
+  });
+}
+
+export function deleteResources(ids: number[]): Promise<ResourcePoolMutateResponse> {
+  return extractFetch('/api/resources/delete', {
+    method: 'POST',
+    body: JSON.stringify({ ids }),
   });
 }
 
@@ -340,6 +728,20 @@ export function checkStoredAccountHealth(ids: number[]): Promise<AccountLibraryH
   return extractFetch('/api/accounts-bulk/check-health', {
     method: 'POST',
     body: JSON.stringify({ ids, concurrency: 8 }),
+  });
+}
+
+export function verifyStoredAccountPlus(ids: number[], proxyRegion = 'JP', useProxyPool = true, goEmailProtocolUrl = ''): Promise<AccountLibraryPlusVerifyResponse> {
+  return extractFetch('/api/accounts-bulk/verify-plus', {
+    method: 'POST',
+    body: JSON.stringify({ ids, concurrency: 8, proxy_region: proxyRegion, use_proxy_pool: useProxyPool, go_email_protocol_url: goEmailProtocolUrl }),
+  });
+}
+
+export function markStoredAccountPlus(ids: number[]): Promise<AccountLibraryMutateResponse> {
+  return extractFetch('/api/accounts-bulk/mark-plus', {
+    method: 'POST',
+    body: JSON.stringify({ ids }),
   });
 }
 

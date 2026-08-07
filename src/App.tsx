@@ -1,10 +1,23 @@
 import { useCallback, useState } from 'react';
-import { ErrorBoundary } from './components/ErrorBoundary';
-import { LinkExtract, type LinkExtractLaunchRequest, type PaymentMethod } from './pages/LinkExtract';
-import { AccountLibrary } from './pages/AccountLibrary';
 import { getExtractApiBase, setExtractApiBase } from './api/client';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { AccountLibrary } from './pages/AccountLibrary';
+import { EmailRegister } from './pages/EmailRegister';
+import { LinkExtract, type LinkExtractLaunchRequest, type PaymentMethod } from './pages/LinkExtract';
+import { OAuthResume } from './pages/OAuthResume';
+import { PhoneRegister } from './pages/PhoneRegister';
+import { ResourcePool } from './pages/ResourcePool';
 
-type AppTab = 'extract' | 'accounts';
+type AppTab = 'extract' | 'accounts' | 'resources' | 'email-register' | 'phone-register' | 'oauth-resume';
+
+const tabs: Array<{ id: AppTab; label: string }> = [
+  { id: 'extract', label: '链接提取' },
+  { id: 'accounts', label: '账号库' },
+  { id: 'resources', label: '资源池' },
+  { id: 'email-register', label: '邮箱注册' },
+  { id: 'phone-register', label: '手机注册' },
+  { id: 'oauth-resume', label: 'OAuth续跑' },
+];
 
 export default function App() {
   const [extractApiBaseInput, setExtractApiBaseInput] = useState(getExtractApiBase());
@@ -38,7 +51,7 @@ export default function App() {
           <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-4 px-4 sm:px-6">
             <div>
               <h1 className="text-lg font-bold text-gray-900">UPIScan</h1>
-              <p className="text-xs text-gray-500">支付链接提取与账号库管理</p>
+              <p className="text-xs text-gray-500">支付链接提取、注册链路与账号库管理</p>
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <input
@@ -62,34 +75,34 @@ export default function App() {
 
         <main className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6">
           <div className="mb-5 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setActiveTab('extract')}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold ${
-                activeTab === 'extract'
-                  ? 'bg-gray-900 text-white'
-                  : 'border border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
-              }`}
-            >
-              链接提取
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('accounts')}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold ${
-                activeTab === 'accounts'
-                  ? 'bg-gray-900 text-white'
-                  : 'border border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
-              }`}
-            >
-              账号库
-            </button>
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold ${
+                  activeTab === tab.id
+                    ? 'bg-gray-900 text-white'
+                    : 'border border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
 
           {activeTab === 'extract' ? (
             <LinkExtract injectedAccessTokens={accountLibraryTokens} launchRequest={accountLaunchRequest} />
-          ) : (
+          ) : activeTab === 'accounts' ? (
             <AccountLibrary onUseTokens={handleUseAccountTokens} />
+          ) : activeTab === 'resources' ? (
+            <ResourcePool />
+          ) : activeTab === 'email-register' ? (
+            <EmailRegister />
+          ) : activeTab === 'phone-register' ? (
+            <PhoneRegister />
+          ) : (
+            <OAuthResume />
           )}
         </main>
       </div>

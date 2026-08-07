@@ -11,7 +11,9 @@ import {
   getAccountStats,
   importAccounts,
   listAccounts,
+  markStoredAccountPlus,
   updateAccount,
+  verifyStoredAccountPlus,
   type AccountLibraryDetail,
   type AccountLibraryItem,
   type AccountLibraryStatsResponse,
@@ -67,6 +69,24 @@ const healthClasses: Record<string, string> = {
   token_expired: 'border-amber-200 bg-amber-50 text-amber-700',
   invalid_token: 'border-rose-200 bg-rose-50 text-rose-700',
   missing_material: 'border-gray-200 bg-gray-50 text-gray-600',
+  unknown: 'border-gray-200 bg-gray-50 text-gray-600',
+};
+
+const plusLabels: Record<string, string> = {
+  verified_plus: 'Plus',
+  manual_confirmed: '手动 Plus',
+  free: 'Free',
+  banned: 'Token 无效',
+  check_failed: '校验失败',
+  unknown: '未校验',
+};
+
+const plusClasses: Record<string, string> = {
+  verified_plus: 'border-sky-200 bg-sky-50 text-sky-700',
+  manual_confirmed: 'border-violet-200 bg-violet-50 text-violet-700',
+  free: 'border-gray-200 bg-gray-50 text-gray-600',
+  banned: 'border-rose-200 bg-rose-50 text-rose-700',
+  check_failed: 'border-amber-200 bg-amber-50 text-amber-700',
   unknown: 'border-gray-200 bg-gray-50 text-gray-600',
 };
 
@@ -132,6 +152,7 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [goPlusWorkerUrl, setGoPlusWorkerUrl] = useState(() => localStorage.getItem('upiscan_go_plus_worker_url') || '');
 
   const selectedAccounts = useMemo(
     () => accounts.filter((account) => selectedIds.has(account.id)),
@@ -178,6 +199,12 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    const value = goPlusWorkerUrl.trim();
+    if (value) localStorage.setItem('upiscan_go_plus_worker_url', value);
+    else localStorage.removeItem('upiscan_go_plus_worker_url');
+  }, [goPlusWorkerUrl]);
 
   const selectedIdList = useCallback(() => [...selectedIds], [selectedIds]);
 
@@ -317,6 +344,35 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
     });
   }, [loadData, runAction, selectedIdList]);
 
+  const handlePlusVerify = useCallback(async () => {
+    const ids = selectedIdList();
+    if (ids.length === 0) {
+      setError('请先选择要校验 Plus 的账号。');
+      return;
+    }
+    await runAction(async () => {
+      const result = await verifyStoredAccountPlus(ids, 'JP', true, goPlusWorkerUrl.trim());
+      await loadData();
+      const summary = Object.entries(result.counts)
+        .map(([name, count]) => `${badgeLabel(name, plusLabels)} ${count}`)
+        .join('，');
+      return `已校验 ${result.checked} 个账号，Plus ${result.paid} 个${summary ? `，${summary}` : ''}`;
+    });
+  }, [goPlusWorkerUrl, loadData, runAction, selectedIdList]);
+
+  const handleMarkPlus = useCallback(async () => {
+    const ids = selectedIdList();
+    if (ids.length === 0) {
+      setError('请先选择要标记为 Plus 的账号。');
+      return;
+    }
+    await runAction(async () => {
+      const result = await markStoredAccountPlus(ids);
+      await loadData();
+      return `已手动标记 ${result.updated} 个 Plus 账号`;
+    });
+  }, [loadData, runAction, selectedIdList]);
+
   const handleArchive = useCallback(async () => {
     const ids = selectedIdList();
     if (ids.length === 0) return;
@@ -373,6 +429,7 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
               <Metric label="有 AT" value={stats?.with_access_token ?? 0} />
               <Metric label="支付可用" value={stats?.eligible ?? 0} tone="emerald" />
               <Metric label="AT 健康" value={stats?.healthy ?? 0} tone="sky" />
+              <Metric label="Plus" value={stats?.plus ?? 0} tone="sky" />
             </div>
             <button
               type="button"
@@ -416,8 +473,17 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
               已选 {selectedIds.size} 个，含 AT {selectedTokenCount} 个
             </label>
             <div className="flex flex-wrap gap-2">
+              <input
+                value={goPlusWorkerUrl}
+                onChange={(event) => setGoPlusWorkerUrl(event.target.value)}
+                placeholder="Go worker URL for Plus verify"
+                disabled={working}
+                className="w-64 rounded-md border border-gray-300 px-3 py-1.5 font-mono text-xs outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500 disabled:bg-gray-50"
+              />
               <ActionButton onClick={() => void handleEligibilityCheck()} disabled={working || selectedIds.size === 0} tone="emerald">支付资格</ActionButton>
               <ActionButton onClick={() => void handleHealthCheck()} disabled={working || selectedIds.size === 0} tone="sky">AT 健康</ActionButton>
+              <ActionButton onClick={() => void handlePlusVerify()} disabled={working || selectedIds.size === 0} tone="sky">Plus 校验</ActionButton>
+              <ActionButton onClick={() => void handleMarkPlus()} disabled={working || selectedIds.size === 0}>标记 Plus</ActionButton>
               <ActionButton onClick={() => void handleExportTokens(false, true)} disabled={working || selectedIds.size === 0}>加入提取</ActionButton>
               <ActionButton onClick={() => void handleExportTokens(true, true)} disabled={working || selectedIds.size === 0}>仅通过加入</ActionButton>
               <ActionButton onClick={() => void handleExportTokens(false, false)} disabled={working || selectedIds.size === 0}>复制 AT</ActionButton>
@@ -432,20 +498,21 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
           {message && <div className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{message}</div>}
 
           <div className="overflow-x-auto rounded-md border border-gray-200">
-            <div className="grid min-w-[980px] grid-cols-[36px_minmax(260px,1.7fr)_112px_120px_136px_230px] border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-500">
+            <div className="grid min-w-[1100px] grid-cols-[36px_minmax(260px,1.7fr)_112px_112px_120px_136px_230px] border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-500">
               <div />
               <div>账号</div>
               <div>AT 健康</div>
+              <div>Plus 状态</div>
               <div>支付资格</div>
               <div>更新时间</div>
               <div>提炼链路</div>
             </div>
-            <div className="max-h-[64vh] min-h-[320px] min-w-[980px] overflow-y-auto">
+            <div className="max-h-[64vh] min-h-[320px] min-w-[1100px] overflow-y-auto">
               {accounts.length === 0 ? (
                 <div className="px-4 py-12 text-center text-sm text-gray-500">暂无账号。</div>
               ) : (
                 accounts.map((account) => (
-                  <div key={account.id} className="grid grid-cols-[36px_minmax(260px,1.7fr)_112px_120px_136px_230px] items-center border-b border-gray-100 px-3 py-2.5 text-sm hover:bg-gray-50">
+                  <div key={account.id} className="grid grid-cols-[36px_minmax(260px,1.7fr)_112px_112px_120px_136px_230px] items-center border-b border-gray-100 px-3 py-2.5 text-sm hover:bg-gray-50">
                     <div>
                       <input type="checkbox" checked={selectedIds.has(account.id)} onChange={() => toggleSelected(account.id)} />
                     </div>
@@ -457,6 +524,7 @@ export function AccountLibrary({ onUseTokens }: AccountLibraryProps) {
                       {account.note && <div className="mt-0.5 truncate text-xs text-gray-400">{account.note}</div>}
                     </div>
                     <StatusBadge value={account.health_status} labels={healthLabels} classes={healthClasses} message={account.health_error} />
+                    <StatusBadge value={account.plus_status || 'unknown'} labels={plusLabels} classes={plusClasses} message={account.plus_check_error} />
                     <StatusBadge value={account.eligibility_status} labels={eligibilityLabels} classes={eligibilityClasses} message={account.eligibility_reason} />
                     <div className="text-xs text-gray-500">{formatTime(account.updated_at)}</div>
                     <div className="flex items-center gap-1.5">

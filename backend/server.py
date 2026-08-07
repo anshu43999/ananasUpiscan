@@ -29,13 +29,26 @@ from .models import (
     AccountLibraryImportResponse,
     AccountLibraryListResponse,
     AccountLibraryMutateResponse,
+    AccountLibraryPlusVerifyRequest,
+    AccountLibraryPlusVerifyResponse,
     AccountLibraryStatsResponse,
     AccountLibraryUpdateRequest,
+    EmailRegistrationCreate,
+    EmailRegistrationJobCreated,
+    EmailRegistrationSnapshot,
     ExtractJobCreate,
     ExtractJobCreated,
     ExtractJobSnapshot,
+    GoEmailBatchCreate,
+    GoEmailBatchResponse,
     MomoPermissionCheckRequest,
     MomoPermissionCheckResponse,
+    OAuthResumeCreate,
+    OAuthResumeJobCreated,
+    OAuthResumeSnapshot,
+    PhoneRegistrationCreate,
+    PhoneRegistrationJobCreated,
+    PhoneRegistrationSnapshot,
     ProxyCheckRequest,
     ProxyCheckResponse,
     ProxyChainTestResult,
@@ -43,12 +56,29 @@ from .models import (
     ReadyPlusTaskDetailResponse,
     ReadyPlusTaskSubmitRequest,
     ReadyPlusTaskSubmitResponse,
+    ResourcePoolImportEmailRequest,
+    ResourcePoolImportPhoneRequest,
+    ResourcePoolImportProxyRequest,
+    ResourcePoolImportResponse,
+    ResourcePoolListResponse,
+    ResourcePoolMutateResponse,
+    ResourcePoolStatusRequest,
 )
 from . import account_library
+from . import resource_pool
 from .account_check import check_account_eligibility
+from .email_registration import email_registration_manager
 from .extractor.context import ExtractionContext
 from .extractor.extract import config_from_env, load_token
 from .extractor.vietnam import check_momo_permission
+from .go_email_protocol import (
+    cancel_go_registration_batch,
+    get_go_registration_batch,
+    start_go_registration_batch,
+    worker_supports_batches,
+)
+from .oauth_resume import oauth_resume_manager
+from .phone_registration import phone_registration_manager
 from .proxy_check import check_proxies
 from .ready_plus_client import ReadyPlusApiError, ready_plus_download, ready_plus_json
 from .ws_manager import WebSocketManager
@@ -69,6 +99,8 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup() -> None:
+    await asyncio.to_thread(lambda: account_library.connect().close())
+    await asyncio.to_thread(lambda: resource_pool.connect().close())
     await job_manager.start()
 
 
@@ -211,10 +243,191 @@ async def check_account_library_health(request: AccountLibraryHealthRequest) -> 
     return AccountLibraryHealthResponse(**payload)
 
 
+@app.post("/api/accounts-bulk/verify-plus", response_model=AccountLibraryPlusVerifyResponse)
+async def verify_account_library_plus(request: AccountLibraryPlusVerifyRequest) -> AccountLibraryPlusVerifyResponse:
+    payload = await asyncio.to_thread(
+        account_library.verify_plus,
+        request.ids,
+        concurrency=request.concurrency,
+        proxy_region=request.proxy_region,
+        use_proxy_pool=request.use_proxy_pool,
+        go_email_protocol_url=request.go_email_protocol_url,
+    )
+    return AccountLibraryPlusVerifyResponse(**payload)
+
+
+@app.post("/api/accounts-bulk/mark-plus", response_model=AccountLibraryMutateResponse)
+async def mark_account_library_plus(request: AccountLibraryIdsRequest) -> AccountLibraryMutateResponse:
+    payload = await asyncio.to_thread(account_library.mark_plus, request.ids)
+    return AccountLibraryMutateResponse(**payload)
+
+
 @app.post("/api/accounts-bulk/export-json", response_model=AccountLibraryExportJsonResponse)
 async def export_account_library_json(request: AccountLibraryExportJsonRequest) -> AccountLibraryExportJsonResponse:
     payload = await asyncio.to_thread(account_library.export_json, request.ids or None, include_secrets=request.include_secrets)
     return AccountLibraryExportJsonResponse(**payload)
+
+
+@app.get("/api/resources", response_model=ResourcePoolListResponse)
+async def list_resource_pool(
+    resource_type: str = "phone",
+    provider: str = "",
+    status: str = "all",
+    limit: int = Query(default=2000, ge=1, le=5000),
+) -> ResourcePoolListResponse:
+    payload = await asyncio.to_thread(resource_pool.list_resources, resource_type, provider, status, limit)
+    return ResourcePoolListResponse(**payload)
+
+
+@app.post("/api/resources/import-phone", response_model=ResourcePoolImportResponse)
+async def import_resource_pool_phone(request: ResourcePoolImportPhoneRequest) -> ResourcePoolImportResponse:
+    payload = await asyncio.to_thread(resource_pool.import_phone_urls, request.text, request.provider)
+    return ResourcePoolImportResponse(**payload)
+
+
+@app.post("/api/resources/import-proxy-seeds", response_model=ResourcePoolImportResponse)
+async def import_resource_pool_proxy_seeds(request: ResourcePoolImportProxyRequest) -> ResourcePoolImportResponse:
+    payload = await asyncio.to_thread(
+        resource_pool.import_proxy_seeds,
+        request.text,
+        provider=request.provider,
+        protocol=request.protocol,
+        style=request.style,
+    )
+    return ResourcePoolImportResponse(**payload)
+
+
+@app.post("/api/resources/import-email", response_model=ResourcePoolImportResponse)
+async def import_resource_pool_email(request: ResourcePoolImportEmailRequest) -> ResourcePoolImportResponse:
+    payload = await asyncio.to_thread(
+        resource_pool.import_email_resources,
+        request.text,
+        provider=request.provider,
+    )
+    return ResourcePoolImportResponse(**payload)
+
+
+@app.post("/api/resources/status", response_model=ResourcePoolMutateResponse)
+async def set_resource_pool_status(request: ResourcePoolStatusRequest) -> ResourcePoolMutateResponse:
+    payload = await asyncio.to_thread(resource_pool.set_status_many, request.ids, status=request.status, error=request.error)
+    return ResourcePoolMutateResponse(**payload)
+
+
+@app.post("/api/resources/delete", response_model=ResourcePoolMutateResponse)
+async def delete_resource_pool_items(request: AccountLibraryIdsRequest) -> ResourcePoolMutateResponse:
+    payload = await asyncio.to_thread(resource_pool.delete_many, request.ids)
+    return ResourcePoolMutateResponse(**payload)
+
+
+@app.post("/api/email-registration/jobs", response_model=EmailRegistrationJobCreated)
+async def create_email_registration_job(request: EmailRegistrationCreate) -> EmailRegistrationJobCreated:
+    job = await asyncio.to_thread(email_registration_manager.create_job, request.model_dump())
+    return EmailRegistrationJobCreated(job_id=job.job_id)
+
+
+@app.get("/api/email-registration/jobs/{job_id}", response_model=EmailRegistrationSnapshot)
+async def get_email_registration_job(job_id: str) -> EmailRegistrationSnapshot:
+    job = await asyncio.to_thread(email_registration_manager.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="email registration job not found")
+    return EmailRegistrationSnapshot(**job.to_dict())
+
+
+def _go_email_batch_config(request: GoEmailBatchCreate | None = None, go_email_protocol_url: str = "") -> dict[str, object]:
+    config: dict[str, object] = config_from_env(Path.cwd())
+    if request is not None:
+        config.update(request.config or {})
+        config.update(
+            {
+                "go_email_protocol_url": request.go_email_protocol_url,
+                "mailbox_provider": request.mailbox_provider,
+                "proxy_seed_region": request.proxy_seed_region,
+                "proxy_seed_styles": request.proxy_seed_styles,
+                "proxy_seed_ttl": request.proxy_seed_ttl,
+                "email_otp_timeout": request.email_otp_timeout,
+                "go_batch_timeout_seconds": request.go_batch_timeout_seconds,
+                "email_tries": request.email_tries,
+                "mailat_protocol_skip_phone": request.skip_phone,
+            }
+        )
+    elif go_email_protocol_url:
+        config["go_email_protocol_url"] = go_email_protocol_url
+    return config
+
+
+@app.get("/api/go-email-batches/health")
+async def go_email_batch_health(go_email_protocol_url: str = "") -> dict[str, object]:
+    config = _go_email_batch_config(None, go_email_protocol_url)
+    supported = await asyncio.to_thread(worker_supports_batches, config)
+    return {"ok": True, "supported": supported}
+
+
+@app.post("/api/go-email-batches", response_model=GoEmailBatchResponse)
+async def create_go_email_batch(request: GoEmailBatchCreate) -> GoEmailBatchResponse:
+    config = _go_email_batch_config(request)
+    supported = await asyncio.to_thread(worker_supports_batches, config)
+    if not supported:
+        raise HTTPException(status_code=400, detail="Go worker does not support email-register-batches")
+    max_concurrent = request.max_concurrent if request.max_concurrent > 0 else None
+    try:
+        snapshot = await asyncio.to_thread(
+            start_go_registration_batch,
+            count=request.count,
+            config=config,
+            batch_id=request.batch_id,
+            max_concurrent=max_concurrent,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return GoEmailBatchResponse(batch_id=str(snapshot.get("batch_id") or request.batch_id or ""), snapshot=snapshot)
+
+
+@app.get("/api/go-email-batches/{batch_id}", response_model=GoEmailBatchResponse)
+async def get_go_email_batch(batch_id: str, go_email_protocol_url: str = "") -> GoEmailBatchResponse:
+    config = _go_email_batch_config(None, go_email_protocol_url)
+    try:
+        snapshot = await asyncio.to_thread(get_go_registration_batch, batch_id, config)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return GoEmailBatchResponse(batch_id=str(snapshot.get("batch_id") or batch_id), snapshot=snapshot)
+
+
+@app.delete("/api/go-email-batches/{batch_id}", response_model=GoEmailBatchResponse)
+async def cancel_go_email_batch(batch_id: str, go_email_protocol_url: str = "") -> GoEmailBatchResponse:
+    config = _go_email_batch_config(None, go_email_protocol_url)
+    try:
+        snapshot = await asyncio.to_thread(cancel_go_registration_batch, batch_id, config)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return GoEmailBatchResponse(batch_id=str(snapshot.get("batch_id") or batch_id), snapshot=snapshot)
+
+
+@app.post("/api/phone-registration/jobs", response_model=PhoneRegistrationJobCreated)
+async def create_phone_registration_job(request: PhoneRegistrationCreate) -> PhoneRegistrationJobCreated:
+    job = await asyncio.to_thread(phone_registration_manager.create_job, request.model_dump())
+    return PhoneRegistrationJobCreated(job_id=job.job_id)
+
+
+@app.get("/api/phone-registration/jobs/{job_id}", response_model=PhoneRegistrationSnapshot)
+async def get_phone_registration_job(job_id: str) -> PhoneRegistrationSnapshot:
+    job = await asyncio.to_thread(phone_registration_manager.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="phone registration job not found")
+    return PhoneRegistrationSnapshot(**job.to_dict())
+
+
+@app.post("/api/oauth-resume/jobs", response_model=OAuthResumeJobCreated)
+async def create_oauth_resume_job(request: OAuthResumeCreate) -> OAuthResumeJobCreated:
+    job = await asyncio.to_thread(oauth_resume_manager.create_job, request.model_dump())
+    return OAuthResumeJobCreated(job_id=job.job_id)
+
+
+@app.get("/api/oauth-resume/jobs/{job_id}", response_model=OAuthResumeSnapshot)
+async def get_oauth_resume_job(job_id: str) -> OAuthResumeSnapshot:
+    job = await asyncio.to_thread(oauth_resume_manager.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="oauth resume job not found")
+    return OAuthResumeSnapshot(**job.to_dict())
 
 
 def _ready_plus_error(exc: Exception) -> HTTPException:

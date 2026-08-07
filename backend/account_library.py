@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from .account_check import _extract_access_token, _parse_token_identity, check_account_eligibility, fetch_subscription_status_details
+from . import resource_pool
+from .go_email_protocol import verify_go_plus_batch, worker_supports_feature
 
 
 DB_LOCK = threading.Lock()
@@ -84,6 +86,11 @@ def init_db(conn: sqlite3.Connection, key: str) -> None:
             "health_source": "TEXT DEFAULT ''",
             "health_error": "TEXT DEFAULT ''",
             "health_json": "TEXT DEFAULT '{}'",
+            "plus_status": "TEXT DEFAULT 'unknown'",
+            "plus_verified_at": "TEXT DEFAULT ''",
+            "plus_check_source": "TEXT DEFAULT ''",
+            "plus_check_error": "TEXT DEFAULT ''",
+            "plus_json": "TEXT DEFAULT '{}'",
         }.items():
             if column not in columns:
                 conn.execute(f"ALTER TABLE account_library ADD COLUMN {column} {definition}")
@@ -130,6 +137,8 @@ def row_to_summary(row: sqlite3.Row) -> dict[str, Any]:
     item["eligibility"] = eligibility if isinstance(eligibility, dict) else {}
     health = loads(item.pop("health_json", ""), {})
     item["health"] = health if isinstance(health, dict) else {}
+    plus = loads(item.pop("plus_json", ""), {})
+    item["plus"] = plus if isinstance(plus, dict) else {}
     return item
 
 
@@ -232,6 +241,10 @@ def parse_account_import(text: str, default_channel: str = "") -> list[dict[str,
                 "status": str(record.get("status") or "active").strip().lower(),
                 "source": str(record.get("source") or "manual_import").strip(),
                 "channels": channels,
+                "plus_status": str(
+                    record.get("plus_status")
+                    or ("verified_plus" if str(record.get("plan_type") or identity.plan_type or "").strip().lower().replace(" ", "") in PAID_PLANS else "unknown")
+                ).strip(),
                 "note": str(record.get("note") or "").strip(),
             }
         )
@@ -253,7 +266,9 @@ def upsert_account(record: dict[str, Any]) -> dict[str, Any]:
                     access_token=COALESCE(NULLIF(?,''), access_token),
                     session_json=COALESCE(NULLIF(?,''), session_json),
                     plan_type=COALESCE(NULLIF(?,''), plan_type), status=?,
-                    source=COALESCE(NULLIF(?,''), source), channels_json=?, note=COALESCE(NULLIF(?,''), note),
+                    source=COALESCE(NULLIF(?,''), source), channels_json=?,
+                    plus_status=COALESCE(NULLIF(?,''), plus_status),
+                    note=COALESCE(NULLIF(?,''), note),
                     updated_at=?
                 WHERE account_key=?
                 """,
@@ -267,6 +282,7 @@ def upsert_account(record: dict[str, Any]) -> dict[str, Any]:
                     record.get("status") or existing["status"] or "active",
                     record.get("source") or "",
                     dumps(merged_channels),
+                    record.get("plus_status") or "",
                     record.get("note") or "",
                     now,
                     record["account_key"],
@@ -277,9 +293,9 @@ def upsert_account(record: dict[str, Any]) -> dict[str, Any]:
                 """
                 INSERT INTO account_library(
                   account_key, account_id, email, password, access_token, session_json,
-                  plan_type, status, source, channels_json, note, created_at, updated_at
+                  plan_type, status, source, channels_json, plus_status, note, created_at, updated_at
                 )
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     record["account_key"],
@@ -292,6 +308,7 @@ def upsert_account(record: dict[str, Any]) -> dict[str, Any]:
                     record.get("status") or "active",
                     record.get("source") or "",
                     dumps(channels),
+                    record.get("plus_status") or "unknown",
                     record.get("note") or "",
                     now,
                     now,
@@ -396,6 +413,11 @@ def update_account(account_id: int, updates: dict[str, Any]) -> dict[str, Any] |
         health_source = str(existing["health_source"] or "")
         health_error = str(existing["health_error"] or "")
         health_json = str(existing["health_json"] or "{}")
+        plus_status = str(existing["plus_status"] or "unknown")
+        plus_verified_at = str(existing["plus_verified_at"] or "")
+        plus_check_source = str(existing["plus_check_source"] or "")
+        plus_check_error = str(existing["plus_check_error"] or "")
+        plus_json = str(existing["plus_json"] or "{}")
         if token_changed:
             eligibility_status = "unknown"
             eligibility_reason = ""
@@ -406,6 +428,11 @@ def update_account(account_id: int, updates: dict[str, Any]) -> dict[str, Any] |
             health_source = ""
             health_error = ""
             health_json = "{}"
+            plus_status = "unknown"
+            plus_verified_at = ""
+            plus_check_source = ""
+            plus_check_error = ""
+            plus_json = "{}"
 
         conn.execute(
             """
@@ -414,6 +441,7 @@ def update_account(account_id: int, updates: dict[str, Any]) -> dict[str, Any] |
                 plan_type=?, status=?, note=?,
                 eligibility_status=?, eligibility_reason=?, eligibility_json=?, last_checked_at=?,
                 health_status=?, health_checked_at=?, health_source=?, health_error=?, health_json=?,
+                plus_status=?, plus_verified_at=?, plus_check_source=?, plus_check_error=?, plus_json=?,
                 updated_at=?
             WHERE id=?
             """,
@@ -435,6 +463,11 @@ def update_account(account_id: int, updates: dict[str, Any]) -> dict[str, Any] |
                 health_source,
                 health_error,
                 health_json,
+                plus_status,
+                plus_verified_at,
+                plus_check_source,
+                plus_check_error,
+                plus_json,
                 now,
                 account_id,
             ),
@@ -719,6 +752,325 @@ def check_health(ids: list[int], concurrency: int = 8) -> dict[str, Any]:
     return {"ok": all(bool(result.get("ok")) for result in results.values()), "checked": len(items), "counts": counts, "items": items}
 
 
+def mark_plus(ids: list[int]) -> dict[str, Any]:
+    ids = [int(item) for item in ids if int(item) > 0]
+    if not ids:
+        return {"ok": False, "updated": 0, "items": []}
+    placeholders = ",".join("?" for _ in ids)
+    now = utc_now()
+    result = {
+        "ok": True,
+        "paid": True,
+        "plan_type": "plus",
+        "plus_status": "manual_confirmed",
+        "source": "manual",
+        "checked_at": now,
+    }
+    with connect() as conn:
+        conn.execute(
+            f"""
+            UPDATE account_library
+            SET plan_type='plus',
+                plus_status='manual_confirmed',
+                plus_verified_at=?,
+                plus_check_source='manual',
+                plus_check_error='',
+                plus_json=?,
+                updated_at=?
+            WHERE id IN ({placeholders})
+            """,
+            (now, dumps(result), now, *ids),
+        )
+        conn.commit()
+    items = [strip_account_secrets(item) for item in (get_account(item_id) for item_id in ids) if item]
+    return {"ok": True, "updated": len(items), "items": items}
+
+
+def _plus_proxy_pool(count: int, proxy_region: str = "JP") -> list[str]:
+    proxy_region = str(proxy_region or "JP").strip().upper() or "JP"
+    try:
+        return resource_pool.proxy_seed_sessions(
+            provider="proxy_seed",
+            count=max(1, min(500, int(count or 1))),
+            region=proxy_region,
+            ttl=int(os.environ.get("ACCOUNT_PLUS_PROXY_TTL", "30") or 30),
+            protocol=str(os.environ.get("ACCOUNT_PLUS_PROXY_PROTOCOL", "socks5") or "socks5"),
+        )
+    except Exception:
+        return []
+
+
+def _plus_proxy_for(proxies: list[str], index: int) -> str:
+    if not proxies:
+        return ""
+    return proxies[index % len(proxies)]
+
+
+def _verify_plus_row(row: sqlite3.Row, *, proxy: str = "") -> dict[str, Any]:
+    token = str(row["access_token"] or "").strip()
+    key = str(row["account_key"] or row["email"] or row["id"])
+    if not token:
+        return {
+            "key": key,
+            "ok": False,
+            "paid": False,
+            "plan_type": str(row["plan_type"] or ""),
+            "plus_status": "check_failed",
+            "source": "local_jwt",
+            "message": "missing access token",
+            "error_code": "missing_access_token",
+        }
+    identity = _parse_token_identity(token)
+    if not identity.token_ok:
+        return {
+            "key": key,
+            "ok": False,
+            "paid": False,
+            "plan_type": str(row["plan_type"] or ""),
+            "plus_status": "banned",
+            "source": "local_jwt",
+            "message": "access token is not a valid JWT",
+            "error_code": "invalid_token",
+        }
+    if identity.jwt_expired:
+        return {
+            "key": key,
+            "ok": False,
+            "paid": False,
+            "plan_type": identity.plan_type or str(row["plan_type"] or ""),
+            "plus_status": "check_failed",
+            "source": "local_jwt",
+            "message": "access token expired",
+            "error_code": "token_expired",
+            "jwt_exp_ms": identity.jwt_exp_ms,
+            "jwt_exp_in_sec": identity.jwt_exp_in_sec,
+            "email": identity.email,
+            "account_id": identity.account_id,
+        }
+
+    subscription = fetch_subscription_status_details(identity, proxy=proxy)
+    if subscription.get("ok"):
+        plan = str(subscription.get("plan_type") or subscription.get("status") or "free").strip().lower().replace(" ", "") or "free"
+        paid = plan in PAID_PLANS
+        return {
+            "key": key,
+            "ok": True,
+            "paid": paid,
+            "plan_type": plan,
+            "plus_status": "verified_plus" if paid else "free",
+            "source": str(subscription.get("source") or "backend-api/wham/usage"),
+            "message": "subscription API check succeeded",
+            "http_status": int(subscription.get("http_status") or 200),
+            "email": identity.email,
+            "account_id": identity.account_id,
+            "jwt_exp_ms": identity.jwt_exp_ms,
+            "jwt_exp_in_sec": identity.jwt_exp_in_sec,
+        }
+
+    http_status = int(subscription.get("http_status") or 0)
+    auth_failed = http_status in {401, 403}
+    fallback_plan = str(identity.plan_type or row["plan_type"] or "").strip().lower().replace(" ", "")
+    fallback_paid = fallback_plan in PAID_PLANS
+    return {
+        "key": key,
+        "ok": False if auth_failed else bool(fallback_plan),
+        "paid": fallback_paid,
+        "plan_type": "banned" if auth_failed else (fallback_plan or "unknown"),
+        "plus_status": "banned" if auth_failed else ("verified_plus" if fallback_paid else "check_failed"),
+        "source": str(subscription.get("source") or "backend-api/wham/usage"),
+        "message": str(subscription.get("error") or "subscription API check failed"),
+        "error_code": "auth_failed" if auth_failed else "subscription_check_failed",
+        "http_status": http_status or None,
+        "email": identity.email,
+        "account_id": identity.account_id,
+        "jwt_exp_ms": identity.jwt_exp_ms,
+        "jwt_exp_in_sec": identity.jwt_exp_in_sec,
+    }
+
+
+def _go_plus_result(row: sqlite3.Row, result: dict[str, Any]) -> dict[str, Any]:
+    identity = _parse_token_identity(str(row["access_token"] or "").strip())
+    paid = bool(result.get("paid"))
+    plan = str(result.get("plan_type") or ("plus" if paid else "free")).strip().lower().replace(" ", "") or "free"
+    status = "verified_plus" if paid else "free"
+    if not result.get("ok") and str(result.get("error_code") or "") in {"invalid_item", "missing_access_token"}:
+        status = "check_failed"
+    if not result.get("ok") and str(result.get("status_code") or "") in {"401", "403"}:
+        status = "banned"
+    return {
+        "key": str(result.get("key") or row["account_key"] or row["id"]),
+        "ok": bool(result.get("ok")),
+        "paid": paid,
+        "plan_type": plan,
+        "plus_status": status,
+        "source": str(result.get("source") or "go-email-protocol/v2/plus-verify"),
+        "message": str(result.get("message") or ""),
+        "error_code": str(result.get("error_code") or ""),
+        "http_status": result.get("status_code"),
+        "email": identity.email,
+        "account_id": identity.account_id or str(row["account_id"] or ""),
+        "jwt_exp_ms": identity.jwt_exp_ms,
+        "jwt_exp_in_sec": identity.jwt_exp_in_sec,
+        "worker_result": result,
+    }
+
+
+def _verify_plus_with_go_worker(
+    rows: list[sqlite3.Row],
+    *,
+    workers: int,
+    proxy_region: str,
+    use_proxy_pool: bool,
+    go_email_protocol_url: str,
+) -> tuple[dict[int, dict[str, Any]], list[str]] | None:
+    config = {"go_email_protocol_url": go_email_protocol_url}
+    if not worker_supports_feature("plus-verify", config):
+        return None
+    proxies = _plus_proxy_pool(max(len(rows), workers), proxy_region) if use_proxy_pool else []
+    items: list[dict[str, Any]] = []
+    for index, row in enumerate(rows):
+        item = {
+            "key": str(row["account_key"] or row["email"] or row["id"]),
+            "account_id": str(row["account_id"] or ""),
+            "access_token": str(row["access_token"] or "").strip(),
+        }
+        proxy = _plus_proxy_for(proxies, index)
+        if proxy:
+            item["proxy"] = proxy
+        items.append(item)
+    payload = verify_go_plus_batch(items, config, workers=workers)
+    raw_results = payload.get("results") if isinstance(payload.get("results"), list) else []
+    results: dict[int, dict[str, Any]] = {}
+    for index, row in enumerate(rows):
+        raw = raw_results[index] if index < len(raw_results) and isinstance(raw_results[index], dict) else {}
+        results[int(row["id"])] = _go_plus_result(row, raw)
+    return results, proxies
+
+
+def verify_plus(
+    ids: list[int],
+    *,
+    concurrency: int = 8,
+    proxy_region: str = "JP",
+    use_proxy_pool: bool = True,
+    go_email_protocol_url: str = "",
+) -> dict[str, Any]:
+    ids = [int(item) for item in ids if int(item) > 0]
+    if not ids:
+        return {"ok": False, "checked": 0, "paid": 0, "counts": {}, "items": []}
+    placeholders = ",".join("?" for _ in ids)
+    with connect() as conn:
+        rows = conn.execute(f"SELECT * FROM account_library WHERE id IN ({placeholders})", tuple(ids)).fetchall()
+    by_id = {int(row["id"]): row for row in rows}
+    ordered_rows = [by_id[item] for item in ids if item in by_id]
+    workers = max(1, min(32, int(concurrency or 8), len(ordered_rows)))
+    results: dict[int, dict[str, Any]] = {}
+    proxies: list[str] = []
+
+    go_url = str(go_email_protocol_url or os.environ.get("GO_EMAIL_PROTOCOL_URL") or "").strip()
+    if go_url:
+        try:
+            go_result = _verify_plus_with_go_worker(
+                ordered_rows,
+                workers=workers,
+                proxy_region=proxy_region,
+                use_proxy_pool=use_proxy_pool,
+                go_email_protocol_url=go_url,
+            )
+        except Exception:
+            go_result = None
+        if go_result is not None:
+            results, proxies = go_result
+
+    if not results:
+        proxies = _plus_proxy_pool(max(len(ordered_rows), workers), proxy_region) if use_proxy_pool else []
+
+        def run(index: int, row: sqlite3.Row) -> tuple[int, dict[str, Any]]:
+            return int(row["id"]), _verify_plus_row(row, proxy=_plus_proxy_for(proxies, index))
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(run, index, row): int(row["id"]) for index, row in enumerate(ordered_rows)}
+            for future in as_completed(futures):
+                account_id = futures[future]
+                try:
+                    results[account_id] = future.result()[1]
+                except Exception as exc:
+                    results[account_id] = {
+                        "key": str(account_id),
+                        "ok": False,
+                        "paid": False,
+                        "plus_status": "check_failed",
+                        "source": "backend-api/wham/usage",
+                        "message": str(exc),
+                        "error_code": "exception",
+                    }
+
+    now = utc_now()
+    with connect() as conn:
+        for account_id, result in results.items():
+            plus_status = str(result.get("plus_status") or "check_failed")
+            plan_type = str(result.get("plan_type") or "")
+            health_status = "active_plus" if result.get("paid") else ("active_free" if plus_status == "free" else str(by_id[account_id]["health_status"] or "unknown"))
+            conn.execute(
+                """
+                UPDATE account_library
+                SET plus_status=?, plus_verified_at=?, plus_check_source=?, plus_check_error=?, plus_json=?,
+                    plan_type=COALESCE(NULLIF(?,''), plan_type),
+                    email=COALESCE(NULLIF(?,''), email), account_id=COALESCE(NULLIF(?,''), account_id),
+                    health_status=CASE WHEN ?!='' THEN ? ELSE health_status END,
+                    health_checked_at=CASE WHEN ?!='' THEN ? ELSE health_checked_at END,
+                    health_source=CASE WHEN ?!='' THEN ? ELSE health_source END,
+                    health_error=CASE WHEN ?!='' THEN '' ELSE health_error END,
+                    health_json=CASE WHEN ?!='' THEN ? ELSE health_json END,
+                    updated_at=?
+                WHERE id=?
+                """,
+                (
+                    plus_status,
+                    now if plus_status in {"verified_plus", "manual_confirmed", "free", "banned"} else "",
+                    str(result.get("source") or ""),
+                    "" if result.get("ok") else str(result.get("message") or ""),
+                    dumps(result),
+                    plan_type,
+                    str(result.get("email") or ""),
+                    str(result.get("account_id") or ""),
+                    health_status,
+                    health_status,
+                    health_status,
+                    now,
+                    health_status,
+                    str(result.get("source") or ""),
+                    health_status,
+                    health_status,
+                    dumps({**result, "health_status": health_status}),
+                    now,
+                    account_id,
+                ),
+            )
+        conn.commit()
+
+    items = []
+    counts: dict[str, int] = {}
+    for account_id in ids:
+        if account_id not in results:
+            continue
+        status = str(results[account_id].get("plus_status") or "check_failed")
+        counts[status] = counts.get(status, 0) + 1
+        detail = get_account(account_id)
+        if detail:
+            detail["plus_result"] = results[account_id]
+            items.append(strip_account_secrets(detail))
+    return {
+        "ok": all(bool(result.get("ok")) for result in results.values()),
+        "checked": len(items),
+        "paid": sum(1 for result in results.values() if bool(result.get("paid"))),
+        "counts": counts,
+        "items": items,
+        "proxy_pool_used": bool(proxies),
+        "proxy_region": str(proxy_region or "JP").strip().upper() or "JP",
+    }
+
+
 def export_json(ids: list[int] | None = None, *, include_secrets: bool = False) -> dict[str, Any]:
     sql = "SELECT * FROM account_library WHERE status!='deleted'"
     params: list[Any] = []
@@ -741,4 +1093,5 @@ def stats() -> dict[str, Any]:
         eligible = conn.execute("SELECT COUNT(*) AS c FROM account_library WHERE eligibility_status='eligible'").fetchone()["c"]
         with_token = conn.execute("SELECT COUNT(*) AS c FROM account_library WHERE access_token!=''").fetchone()["c"]
         healthy = conn.execute("SELECT COUNT(*) AS c FROM account_library WHERE health_status IN ('active_free','active_plus','active')").fetchone()["c"]
-    return {"ok": True, "total": int(total), "active": int(active), "eligible": int(eligible), "with_access_token": int(with_token), "healthy": int(healthy)}
+        plus = conn.execute("SELECT COUNT(*) AS c FROM account_library WHERE plus_status IN ('verified_plus','manual_confirmed') OR health_status='active_plus' OR plan_type IN ('plus','pro','team','business','enterprise','paid')").fetchone()["c"]
+    return {"ok": True, "total": int(total), "active": int(active), "eligible": int(eligible), "with_access_token": int(with_token), "healthy": int(healthy), "plus": int(plus)}
