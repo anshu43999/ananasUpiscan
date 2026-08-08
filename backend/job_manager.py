@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import uuid
 from concurrent.futures import ProcessPoolExecutor
@@ -10,6 +11,7 @@ from multiprocessing.managers import SyncManager
 from typing import Any
 
 from .models import ExtractJobCreate, ExtractJobLog, ExtractJobResult, ExtractJobSnapshot, JobStatus
+from .job_retention import prune_jobs, trim_sequence
 from .worker import drain_queue_nowait, run_extract_worker
 from .ws_manager import WebSocketManager
 
@@ -37,6 +39,9 @@ class JobManager:
         self._jobs: dict[str, JobState] = {}
         self._lock = asyncio.Lock()
         self._poll_task: asyncio.Task[None] | None = None
+        self._max_logs = max(100, min(5000, int(os.environ.get("UPISCAN_EXTRACT_JOB_MAX_LOGS", "800") or 800)))
+        self._max_jobs = max(1, min(1000, int(os.environ.get("UPISCAN_EXTRACT_JOB_MAX_HISTORY", "80") or 80)))
+        self._job_ttl_seconds = max(60, int(os.environ.get("UPISCAN_EXTRACT_JOB_TTL_SECONDS", str(6 * 60 * 60)) or (6 * 60 * 60)))
 
     async def start(self) -> None:
         if self._executor is None:
@@ -68,6 +73,7 @@ class JobManager:
         state.status = "running"
         state.updated_at = datetime.now(timezone.utc)
         async with self._lock:
+            prune_jobs(self._jobs, max_jobs=self._max_jobs, ttl_seconds=self._job_ttl_seconds)
             self._jobs[job_id] = state
         await self._append_log(job_id, "job started", "info")
         return self.snapshot_state(state)
@@ -111,6 +117,7 @@ class JobManager:
             if not state:
                 return
             state.logs.append(log)
+            trim_sequence(state.logs, self._max_logs)
             state.updated_at = datetime.now(timezone.utc)
         await self._ws.broadcast(job_id, {"type": "log", "log": log.model_dump(mode="json")})
 
@@ -144,6 +151,8 @@ class JobManager:
             state.status = status if status in {"completed", "failed", "cancelled"} else "failed"
             state.error = output.get("error") if isinstance(output, dict) else None
             state.result = self._result_from_logs(state.logs) if state.status == "completed" else None
+            state.future = None
+            state.queue = None
             state.updated_at = datetime.now(timezone.utc)
             snapshot = self.snapshot_state(state)
         await self._ws.broadcast(state.job_id, {"type": "snapshot", "job": snapshot.model_dump(mode="json")})

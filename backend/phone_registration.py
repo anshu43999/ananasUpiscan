@@ -20,6 +20,7 @@ import requests
 
 from . import account_library, resource_pool
 from .extractor.proxy import normalize_proxy_url, proxy_label
+from .job_retention import env_int, prune_jobs, trim_sequence
 from .registration_proxy_precheck import filter_clean_proxies
 
 
@@ -216,11 +217,17 @@ class PhoneRegistrationManager:
         self._jobs: dict[str, PhoneRegistrationJob] = {}
         self._lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=max(1, int(os.environ.get("UPISCAN_PHONE_REGISTER_WORKERS", "2") or 2)))
+        self._max_logs = env_int("UPISCAN_REGISTER_JOB_MAX_LOGS", 500, maximum=5000)
+        self._max_items = env_int("UPISCAN_REGISTER_JOB_MAX_ITEMS", 1000, maximum=10000)
+        self._max_jobs = env_int("UPISCAN_REGISTER_JOB_MAX_HISTORY", 50, maximum=1000)
+        self._job_ttl_seconds = env_int("UPISCAN_REGISTER_JOB_TTL_SECONDS", 6 * 60 * 60, minimum=60)
+        self._concurrency_max = env_int("UPISCAN_PHONE_REGISTER_CONCURRENCY_MAX", 2, maximum=8)
 
     def create_job(self, payload: dict[str, Any]) -> PhoneRegistrationJob:
         job_id = uuid.uuid4().hex
         job = PhoneRegistrationJob(job_id=job_id)
         with self._lock:
+            prune_jobs(self._jobs, max_jobs=self._max_jobs, ttl_seconds=self._job_ttl_seconds)
             self._jobs[job_id] = job
         self._executor.submit(self._run_job, job_id, payload)
         return job
@@ -235,6 +242,7 @@ class PhoneRegistrationManager:
             if not job:
                 return
             job.logs.append({"timestamp": utc_now(), "message": message, "level": level})
+            trim_sequence(job.logs, self._max_logs)
             job.updated_at = utc_now()
 
     def _patch(self, job_id: str, **updates: Any) -> None:
@@ -257,6 +265,7 @@ class PhoneRegistrationManager:
                 job.success += 1
             else:
                 job.failed += 1
+            trim_sequence(job.items, self._max_items)
             job.updated_at = utc_now()
 
     def _registration_proxy_pool(self, job_id: str, payload: dict[str, Any], target_count: int = 1) -> list[str]:
@@ -364,10 +373,13 @@ class PhoneRegistrationManager:
             if not targets:
                 raise RuntimeError("没有可用的手机注册目标")
             proxy_pool = self._registration_proxy_pool(job_id, payload, len(targets))
-            concurrency = max(1, min(8, int(payload.get("concurrency") or 1), len(targets)))
+            requested_concurrency = int(payload.get("concurrency") or 1)
+            concurrency = max(1, min(self._concurrency_max, requested_concurrency, len(targets)))
             provider_key = self._sms_provider_key(payload)
             self._patch(job_id, status="running", total=len(targets))
             self._log(job_id, f"手机注册任务开始：短信来源 {provider_key}，目标 {len(targets)} 个，并发 {concurrency}")
+            if requested_concurrency > concurrency:
+                self._log(job_id, f"手机注册并发已限制：请求 {requested_concurrency}，实际 {concurrency}", "warn")
             if proxy_pool:
                 self._log(job_id, f"注册 IP 池已加载：{len(proxy_pool)} 条，失败后切换下一条")
             else:

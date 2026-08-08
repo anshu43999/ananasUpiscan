@@ -24,6 +24,7 @@ import requests
 from . import account_library, resource_pool
 from .extractor.proxy import normalize_proxy_url, proxy_label
 from .go_email_protocol import normalize_email_protocol_backend, run_go_email_protocol
+from .job_retention import env_int, prune_jobs, trim_sequence
 from .registration_proxy_precheck import filter_clean_proxies
 
 
@@ -396,11 +397,17 @@ class EmailRegistrationManager:
         self._jobs: dict[str, EmailRegistrationJob] = {}
         self._lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=max(1, int(os.environ.get("UPISCAN_EMAIL_REGISTER_WORKERS", "2") or 2)))
+        self._max_logs = env_int("UPISCAN_REGISTER_JOB_MAX_LOGS", 500, maximum=5000)
+        self._max_items = env_int("UPISCAN_REGISTER_JOB_MAX_ITEMS", 1000, maximum=10000)
+        self._max_jobs = env_int("UPISCAN_REGISTER_JOB_MAX_HISTORY", 50, maximum=1000)
+        self._job_ttl_seconds = env_int("UPISCAN_REGISTER_JOB_TTL_SECONDS", 6 * 60 * 60, minimum=60)
+        self._concurrency_max = env_int("UPISCAN_EMAIL_REGISTER_CONCURRENCY_MAX", 2, maximum=8)
 
     def create_job(self, payload: dict[str, Any]) -> EmailRegistrationJob:
         job_id = uuid.uuid4().hex
         job = EmailRegistrationJob(job_id=job_id)
         with self._lock:
+            prune_jobs(self._jobs, max_jobs=self._max_jobs, ttl_seconds=self._job_ttl_seconds)
             self._jobs[job_id] = job
         self._executor.submit(self._run_job, job_id, payload)
         return job
@@ -415,6 +422,7 @@ class EmailRegistrationManager:
             if not job:
                 return
             job.logs.append({"timestamp": utc_now(), "message": message, "level": level})
+            trim_sequence(job.logs, self._max_logs)
             job.updated_at = utc_now()
 
     def _patch(self, job_id: str, **updates: Any) -> None:
@@ -437,6 +445,7 @@ class EmailRegistrationManager:
                 job.success += 1
             else:
                 job.failed += 1
+            trim_sequence(job.items, self._max_items)
             job.updated_at = utc_now()
 
     def _run_job(self, job_id: str, payload: dict[str, Any]) -> None:
@@ -445,9 +454,12 @@ class EmailRegistrationManager:
             if not rows:
                 raise RuntimeError("没有可用邮箱行，请使用 email----收信URL 或 email----code:...----mail:... 格式")
             proxy_pool = self._registration_proxy_pool(job_id, payload, len(rows))
-            concurrency = max(1, min(8, int(payload.get("concurrency") or 1), len(rows)))
+            requested_concurrency = int(payload.get("concurrency") or 1)
+            concurrency = max(1, min(self._concurrency_max, requested_concurrency, len(rows)))
             self._patch(job_id, status="running", total=len(rows))
             self._log(job_id, f"邮箱注册任务开始：{len(rows)} 个邮箱，并发 {concurrency}")
+            if requested_concurrency > concurrency:
+                self._log(job_id, f"邮箱注册并发已限制：请求 {requested_concurrency}，实际 {concurrency}", "warn")
             if proxy_pool:
                 self._log(job_id, f"注册 IP 池已加载：{len(proxy_pool)} 条，每个邮箱按顺序轮换，失败后切换下一条")
             else:

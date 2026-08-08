@@ -14,7 +14,9 @@ Long-running helper functions are imported from their canonical homes:
 from __future__ import annotations
 
 import json
+import os
 import secrets
+import threading
 import uuid
 import time
 from dataclasses import dataclass
@@ -23,6 +25,18 @@ from typing import Any, Callable, Optional
 
 from core.proxy_utils import build_playwright_proxy_config
 
+
+def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
+    try:
+        value = int(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, value)
+
+
+_BROWSER_SESSION_LIMIT = _env_int("UPISCAN_BROWSER_SESSION_LIMIT", 2)
+_BROWSER_SESSION_WAIT_TIMEOUT = _env_int("UPISCAN_BROWSER_SESSION_WAIT_TIMEOUT", 30 * 60)
+_BROWSER_SESSION_SEMAPHORE = threading.BoundedSemaphore(_BROWSER_SESSION_LIMIT)
 
 
 @dataclass(frozen=True)
@@ -121,22 +135,48 @@ class BrowserSession:
         self._log_messages: list[str] = []
         self._proxy_runtime: Any = None
         self._external_log_fn: Callable[[str], None] | None = self.config.get("_log_fn") if callable(self.config.get("_log_fn")) else None
+        self._browser_slot_acquired = False
 
     # ------------------------------------------------------------------
     # Context manager
     # ------------------------------------------------------------------
 
     def __enter__(self) -> BrowserSession:
-        self._launch()
-        return self
+        self._acquire_browser_slot()
+        try:
+            self._launch()
+            return self
+        except Exception:
+            self._cleanup()
+            self._release_browser_slot()
+            raise
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
-        # Auto-save storage state if a path is configured
-        storage_path = self.config.get("browser_storage_state_path")
-        if storage_path:
-            self.save_storage_state(str(storage_path))
-        self._cleanup()
+        try:
+            # Auto-save storage state if a path is configured
+            storage_path = self.config.get("browser_storage_state_path")
+            if storage_path:
+                self.save_storage_state(str(storage_path))
+            self._cleanup()
+        finally:
+            self._release_browser_slot()
         return False
+
+    def _acquire_browser_slot(self) -> None:
+        self._log(f"  waiting browser slot: limit={_BROWSER_SESSION_LIMIT}")
+        acquired = _BROWSER_SESSION_SEMAPHORE.acquire(timeout=_BROWSER_SESSION_WAIT_TIMEOUT)
+        if not acquired:
+            raise RuntimeError(f"等待浏览器并发槽超时({_BROWSER_SESSION_WAIT_TIMEOUT}s)，当前全局限制={_BROWSER_SESSION_LIMIT}")
+        self._browser_slot_acquired = True
+
+    def _release_browser_slot(self) -> None:
+        if not self._browser_slot_acquired:
+            return
+        self._browser_slot_acquired = False
+        try:
+            _BROWSER_SESSION_SEMAPHORE.release()
+        except ValueError:
+            pass
 
     # ------------------------------------------------------------------
     # Launch
@@ -606,5 +646,7 @@ class BrowserSession:
 
     def _log(self, msg: str) -> None:
         self._log_messages.append(msg)
+        if len(self._log_messages) > 500:
+            del self._log_messages[: len(self._log_messages) - 500]
         if self._external_log_fn:
             self._external_log_fn(msg)

@@ -16,6 +16,7 @@ from . import account_library, resource_pool
 from .account_check import _extract_access_token
 from .email_registration import LinkApiMailbox
 from .extractor.proxy import normalize_proxy_url, proxy_label
+from .job_retention import env_int, prune_jobs, trim_sequence
 from .registration_proxy_precheck import filter_clean_proxies
 
 
@@ -66,12 +67,18 @@ class OAuthResumeManager:
         self._jobs: dict[str, OAuthResumeJob] = {}
         self._lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=max(1, int(os.environ.get("UPISCAN_OAUTH_RESUME_WORKERS", "2") or 2)))
+        self._max_logs = env_int("UPISCAN_REGISTER_JOB_MAX_LOGS", 500, maximum=5000)
+        self._max_items = env_int("UPISCAN_REGISTER_JOB_MAX_ITEMS", 1000, maximum=10000)
+        self._max_jobs = env_int("UPISCAN_REGISTER_JOB_MAX_HISTORY", 50, maximum=1000)
+        self._job_ttl_seconds = env_int("UPISCAN_REGISTER_JOB_TTL_SECONDS", 6 * 60 * 60, minimum=60)
+        self._concurrency_max = env_int("UPISCAN_OAUTH_RESUME_CONCURRENCY_MAX", 2, maximum=6)
 
     def create_job(self, payload: dict[str, Any]) -> OAuthResumeJob:
         payload = self._normalize_mode_payload(payload)
         job_id = uuid.uuid4().hex
         job = OAuthResumeJob(job_id=job_id)
         with self._lock:
+            prune_jobs(self._jobs, max_jobs=self._max_jobs, ttl_seconds=self._job_ttl_seconds)
             self._jobs[job_id] = job
         self._executor.submit(self._run_job, job_id, payload)
         return job
@@ -130,6 +137,7 @@ class OAuthResumeManager:
             if not job:
                 return
             job.logs.append({"timestamp": utc_now(), "message": message, "level": level})
+            trim_sequence(job.logs, self._max_logs)
             job.updated_at = utc_now()
 
     def _patch(self, job_id: str, **updates: Any) -> None:
@@ -152,6 +160,7 @@ class OAuthResumeManager:
                 job.success += 1
             else:
                 job.failed += 1
+            trim_sequence(job.items, self._max_items)
             job.updated_at = utc_now()
 
     def _run_job(self, job_id: str, payload: dict[str, Any]) -> None:
@@ -160,10 +169,13 @@ class OAuthResumeManager:
             if not tasks:
                 raise RuntimeError("没有可续跑的账号或 resume JSON")
             proxy_pool = self._registration_proxy_pool(job_id, payload, len(tasks))
-            concurrency = max(1, min(6, int(payload.get("concurrency") or 1), len(tasks)))
+            requested_concurrency = int(payload.get("concurrency") or 1)
+            concurrency = max(1, min(self._concurrency_max, requested_concurrency, len(tasks)))
             mode_label = OAUTH_MODE_LABELS.get(str(payload.get("oauth_mode") or "resume"), "基础 OAuth 续跑")
             self._patch(job_id, status="running", total=len(tasks))
             self._log(job_id, f"{mode_label}任务开始：{len(tasks)} 个账号，并发 {concurrency}")
+            if requested_concurrency > concurrency:
+                self._log(job_id, f"{mode_label}并发已限制：请求 {requested_concurrency}，实际 {concurrency}", "warn")
             if proxy_pool:
                 self._log(job_id, f"OAuth IP 池已加载：{len(proxy_pool)} 条，失败后按顺序切换")
             else:
