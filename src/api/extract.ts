@@ -402,6 +402,7 @@ export interface PhoneRegistrationSnapshot {
 }
 
 export interface OAuthResumeCreateOptions {
+  oauth_mode?: 'resume' | 'email_otp' | 'phone_bind';
   account_id?: number | null;
   account_ids?: number[];
   resume_json?: string;

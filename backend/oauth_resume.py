@@ -20,6 +20,11 @@ from .registration_proxy_precheck import filter_clean_proxies
 
 
 VALID_ACCOUNT_HEALTH_STATUSES = {"active", "active_free", "active_plus"}
+OAUTH_MODE_LABELS = {
+    "resume": "基础 OAuth 续跑",
+    "email_otp": "邮箱 OTP / 邮箱绑定",
+    "phone_bind": "手机号绑定",
+}
 
 
 def utc_now() -> str:
@@ -63,6 +68,7 @@ class OAuthResumeManager:
         self._executor = ThreadPoolExecutor(max_workers=max(1, int(os.environ.get("UPISCAN_OAUTH_RESUME_WORKERS", "2") or 2)))
 
     def create_job(self, payload: dict[str, Any]) -> OAuthResumeJob:
+        payload = self._normalize_mode_payload(payload)
         job_id = uuid.uuid4().hex
         job = OAuthResumeJob(job_id=job_id)
         with self._lock:
@@ -73,6 +79,50 @@ class OAuthResumeManager:
     def get_job(self, job_id: str) -> OAuthResumeJob | None:
         with self._lock:
             return self._jobs.get(job_id)
+
+    @staticmethod
+    def _normalize_mode_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(payload or {})
+        mode = str(normalized.get("oauth_mode") or "resume").strip()
+        if mode not in OAUTH_MODE_LABELS:
+            mode = "resume"
+        normalized["oauth_mode"] = mode
+        phone_keys = (
+            "bind_sms_provider",
+            "bind_use_resource_pool",
+            "bind_resource_provider",
+            "bind_sms_phone_url",
+            "bind_sms_phone_urls",
+            "bind_sms_phone_url_file",
+            "bind_sms_proxy",
+            "bind_sms_api_key",
+            "bind_sms_service",
+            "bind_sms_country",
+            "bind_country_code",
+            "bind_country_name",
+            "bind_herosms_api_key",
+            "bind_herosms_service",
+            "bind_herosms_country",
+            "bind_herosms_max_price",
+            "bind_smsbower_api_key",
+            "bind_smsbower_service",
+            "bind_smsbower_country",
+            "bind_smsbower_max_price",
+            "bind_smsbower_min_price",
+            "bind_smsbower_provider_ids",
+            "bind_sms_activate_api_key",
+            "bind_sms_activate_country",
+        )
+        if mode == "resume":
+            normalized["bind_email"] = ""
+            normalized["bind_email_text"] = ""
+            normalized["bind_email_use_resource_pool"] = False
+            for key in phone_keys:
+                normalized[key] = False if key == "bind_use_resource_pool" else ""
+        elif mode == "email_otp":
+            for key in phone_keys:
+                normalized[key] = False if key == "bind_use_resource_pool" else ""
+        return normalized
 
     def _log(self, job_id: str, message: str, level: str = "info") -> None:
         with self._lock:
@@ -111,8 +161,9 @@ class OAuthResumeManager:
                 raise RuntimeError("没有可续跑的账号或 resume JSON")
             proxy_pool = self._registration_proxy_pool(job_id, payload, len(tasks))
             concurrency = max(1, min(6, int(payload.get("concurrency") or 1), len(tasks)))
+            mode_label = OAUTH_MODE_LABELS.get(str(payload.get("oauth_mode") or "resume"), "基础 OAuth 续跑")
             self._patch(job_id, status="running", total=len(tasks))
-            self._log(job_id, f"OAuth 绑定/续跑任务开始：{len(tasks)} 个账号，并发 {concurrency}")
+            self._log(job_id, f"{mode_label}任务开始：{len(tasks)} 个账号，并发 {concurrency}")
             if proxy_pool:
                 self._log(job_id, f"OAuth IP 池已加载：{len(proxy_pool)} 条，失败后按顺序切换")
             else:
@@ -129,7 +180,7 @@ class OAuthResumeManager:
             job = self.get_job(job_id)
             self._patch(job_id, status="completed" if job and job.failed == 0 else "failed")
             job = self.get_job(job_id)
-            self._log(job_id, f"OAuth 绑定/续跑结束：成功 {job.success if job else 0}，失败 {job.failed if job else 0}")
+            self._log(job_id, f"{mode_label}结束：成功 {job.success if job else 0}，失败 {job.failed if job else 0}")
         except Exception as exc:
             self._patch(job_id, status="failed", error=str(exc))
             self._log(job_id, str(exc), "error")

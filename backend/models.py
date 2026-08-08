@@ -568,6 +568,7 @@ class PhoneRegistrationSnapshot(BaseModel):
 
 
 class OAuthResumeCreate(BaseModel):
+    oauth_mode: Literal["resume", "email_otp", "phone_bind"] = "resume"
     account_id: int | None = None
     account_ids: list[int] = Field(default_factory=list)
     resume_json: str = ""
